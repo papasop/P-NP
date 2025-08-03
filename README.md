@@ -27,3 +27,24 @@ Where:
 
 This script fits the above model and achieves an extraordinarily high coefficient of determination:
 
+
+This result suggests **nearly perfect alignment** between structural compressibility and runtime complexity across synthetic NP-complete and P-class instances.
+
+---
+
+## 📂 Files
+
+- `lambda_log2n_regression.py` — core regression code
+- `sample_data.csv` — data of [n, λₖ(x), log₂T(x)]
+- `plot_fit.png` — optional visualization of regression surface (if included)
+
+---
+
+## ▶️ Usage
+
+Run the script directly in a Python environment with `numpy`, `pandas`, and `scikit-learn`:
+
+```bash
+python lambda_log2n_regression.py
+
+
