@@ -1,0 +1,518 @@
+# ============================================================
+# SCCT 3-SAT + DPLL 实验（v2，双定律版）
+# - Structure–Work Law:   log2 |trace(x)| ≈ α' λ_B + β' log2 n + γ'
+# - Structure–Time Law:   log2 T(x)      ≈ α  λ_B + β  log2 n + γ
+# ============================================================
+
+import random
+import time
+import math
+import json
+import zlib
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# 为了结果可复现
+random.seed(2025)
+np.random.seed(2025)
+
+# =========================
+# 1. 3-SAT 实例生成
+# =========================
+
+def generate_3sat_instance(n_vars: int, ratio: float = 4.2) -> List[List[int]]:
+    """
+    生成随机 3-SAT 实例，m ≈ ratio * n_vars。
+    子句形式为整数列表，如 [1, -3, 5] 表示 (x1 ∨ ¬x3 ∨ x5)。
+    """
+    n_clauses = int(round(ratio * n_vars))
+    clauses = []
+    for _ in range(n_clauses):
+        # 随机选取 3 个不同变量
+        vars_ = random.sample(range(1, n_vars + 1), 3)
+        clause = []
+        for v in vars_:
+            sign = random.choice([1, -1])
+            clause.append(sign * v)
+        clauses.append(clause)
+    return clauses
+
+# =========================
+# 2. DPLL + Trace（带超时标志）
+# =========================
+
+@dataclass
+class DPLLResult:
+    sat: bool
+    assignment: Dict[int, bool]
+    clauses: List[List[int]]
+    trace: List[Dict]
+    time_sec: float
+    timeout: bool = False   # [FIX] 新增：记录是否发生超时
+
+MAX_TRACE_SIZE = 100000      # [FIX] 限制轨迹长度，避免内存爆炸
+
+def simplify_clauses(clauses, var, value):
+    """
+    在 DPLL 过程中应用 (var = value) 后简化子句集合：
+      - 删除已满足的子句
+      - 删除子句中与赋值冲突的文字
+    """
+    new_clauses = []
+    lit_true = var if value else -var
+    lit_false = -lit_true
+    for clause in clauses:
+        if lit_true in clause:
+            # 整个子句被满足，直接跳过
+            continue
+        # 删除与赋值冲突的文字
+        new_clause = [l for l in clause if l != lit_false]
+        new_clauses.append(new_clause)
+    return new_clauses
+
+def unit_propagation(clauses, assignment, trace, start_time, time_limit) -> Tuple[Optional[bool], List[List[int]]]:
+    """
+    单子句传播。
+    返回 (冲突标志, 简化后的子句列表)
+    冲突标志:
+      - True: 发现空子句 ⇒ 冲突
+      - False: 无冲突
+      - None: 由于超时中止（由上层处理）
+    """
+    while True:
+        # [FIX] 超时检查
+        if time_limit is not None and (time.perf_counter() - start_time) > time_limit:
+            return None, clauses
+
+        # [FIX] 空公式检查：所有子句被满足
+        if not clauses:
+            return False, clauses
+
+        unit_lits = [c[0] for c in clauses if len(c) == 1]
+        if not unit_lits:
+            break
+
+        for lit in unit_lits:
+            v = abs(lit)
+            val = (lit > 0)
+            if v in assignment:
+                # 已有赋值且冲突 => 空子句产生
+                if assignment[v] != val:
+                    return True, clauses  # 冲突
+                continue
+
+            assignment[v] = val
+            # 记录 trace（截断）
+            if len(trace) < MAX_TRACE_SIZE:
+                trace.append({
+                    "type": "unit",
+                    "var": v,
+                    "value": val,
+                    "num_clauses": len(clauses),
+                })
+
+            clauses = simplify_clauses(clauses, v, val)
+            if not clauses:
+                # 所有子句被满足
+                return False, clauses
+
+            # 再次检测空子句
+            if any(len(c) == 0 for c in clauses):
+                return True, clauses
+
+    return False, clauses
+
+def choose_variable(clauses, assignment) -> Optional[int]:
+    """
+    选择尚未赋值的变量。
+    当前使用简单“出现次数最多”的启发式。
+    （如果你要换 MOM / VSIDS，可以在这里替换。）
+    """
+    counts = {}
+    for clause in clauses:
+        for lit in clause:
+            v = abs(lit)
+            # [FIX] 已赋值变量不再计数
+            if v in assignment:
+                continue
+            counts[v] = counts.get(v, 0) + 1
+    if not counts:
+        return None
+    # 返回出现次数最多的变量
+    return max(counts, key=counts.get)
+
+def dpll_solve(clauses: List[List[int]], n_vars: int,
+               time_limit: Optional[float] = 5.0) -> DPLLResult:
+    """
+    对 3-SAT 实例执行 DPLL 搜索，记录搜索轨迹。
+    time_limit 为总 wall-clock 时间限制（秒）。
+    """
+    start = time.perf_counter()
+    trace: List[Dict] = []
+    assignment: Dict[int, bool] = {}
+
+    def _dpll_rec(clauses, assignment) -> Tuple[bool, Dict[int, bool], List[List[int]], bool]:
+        """
+        递归 DPLL：
+          返回 (sat, assignment, clauses, timeout_flag)
+        """
+        # [FIX] 超时检查
+        if time_limit is not None and (time.perf_counter() - start) > time_limit:
+            return False, assignment, clauses, True
+
+        # 单子句传播
+        conflict, clauses2 = unit_propagation(clauses, assignment, trace, start, time_limit)
+        if conflict is None:
+            # [FIX] unit_propagation 中发现超时
+            return False, assignment, clauses, True
+        if conflict:
+            return False, assignment, clauses2, False
+        if not clauses2:
+            # 所有子句满足
+            return True, assignment, clauses2, False
+
+        v = choose_variable(clauses2, assignment)
+        if v is None:
+            # 没有变量可选，视为失败
+            return False, assignment, clauses2, False
+
+        # 尝试 v = True / False
+        for val in [True, False]:
+            if len(trace) < MAX_TRACE_SIZE:
+                trace.append({
+                    "type": "branch",
+                    "var": v,
+                    "value": val,
+                    "num_clauses": len(clauses2),
+                })
+
+            new_assignment = dict(assignment)
+            new_assignment[v] = val
+            new_clauses = simplify_clauses(clauses2, v, val)
+            # 空子句检测
+            if any(len(c) == 0 for c in new_clauses):
+                continue
+
+            sat, final_assignment, final_clauses, timeout_flag = _dpll_rec(new_clauses, new_assignment)
+            if timeout_flag:
+                return False, assignment, clauses2, True
+            if sat:
+                return True, final_assignment, final_clauses, False
+
+        # 两个分支都失败
+        return False, assignment, clauses2, False
+
+    sat, final_assignment, final_clauses, timeout_flag = _dpll_rec(clauses, assignment)
+    end = time.perf_counter()
+    elapsed = max(end - start, 1e-9)
+
+    # [FIX] 统一封装结果，保留 timeout 标志
+    return DPLLResult(
+        sat=sat,
+        assignment=final_assignment,
+        clauses=final_clauses,
+        trace=trace[:MAX_TRACE_SIZE],
+        time_sec=elapsed,
+        timeout=timeout_flag
+    )
+
+# =========================
+# 3. 压缩近似 C_t & λ_B
+# =========================
+
+COMP_LEVEL = 9
+
+def C_t(data: bytes, level: int = COMP_LEVEL) -> int:
+    """
+    利用 zlib(level=9) 近似时间有界 Kolmogorov 复杂度：
+      C_t(s) = |zlib.compress(s, level=9)|
+    """
+    if not data:
+        return 1
+    return max(len(zlib.compress(data, level)), 1)
+
+def encode_problem(clauses: List[List[int]], n_vars: int) -> bytes:
+    """
+    将 3-SAT 实例编码为字节串。
+    """
+    obj = {
+        "n_vars": n_vars,
+        "clauses": clauses,
+    }
+    text = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    return text.encode("utf-8")
+
+def encode_trace(trace: List[Dict]) -> bytes:
+    """
+    将 DPLL 搜索轨迹编码为字节串。
+    trace 已经限制长度，避免 JSON 序列化爆炸。
+    """
+    obj = {
+        "trace": trace,
+    }
+    text = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    return text.encode("utf-8")
+
+def structural_measures(problem_bytes: bytes, trace_bytes: bytes, level: int = COMP_LEVEL):
+    """
+    计算 C_p, C_cond, λ 的多个变体。
+    主角：lambda_B = C_cond / (C_p + C_cond)
+    """
+    # 直接压缩实例
+    C_p = C_t(problem_bytes, level=level)
+
+    # 为“条件压缩”准备拼接
+    sep = b'||'
+    joint = problem_bytes + sep + trace_bytes
+    C_joint = C_t(joint, level=level)
+
+    # [FIX] 正确减去分隔符的压缩代价
+    sep_compressed_len = len(zlib.compress(sep, level))
+    C_cond = max(C_joint - C_p - sep_compressed_len, 1)
+
+    # λ 版本（保留 v1/A 作参考）
+    lambda_v1 = math.log10(C_cond / C_p)
+    lambda_A = -lambda_v1
+    lambda_B = C_cond / (C_p + C_cond)
+
+    return C_p, C_cond, lambda_v1, lambda_A, lambda_B
+
+# =========================
+# 4. 运行实验
+# =========================
+
+def run_experiment(
+    n_min: int = 20,
+    n_max: int = 40,
+    ratio: float = 4.2,
+    n_samples: int = 50,
+    time_limit: float = 1.0
+) -> pd.DataFrame:
+    """
+    在 3-SAT + DPLL 上运行若干随机实例，收集 SCCT 数据。
+    """
+    rows = []
+    for i in range(1, n_samples + 1):
+        n_vars = random.randint(n_min, n_max)
+        clauses = generate_3sat_instance(n_vars, ratio=ratio)
+        n_clauses = len(clauses)
+
+        result = dpll_solve(clauses, n_vars, time_limit=time_limit)
+
+        T = result.time_sec
+        sat = result.sat
+        timeout = result.timeout
+        trace = result.trace
+        trace_len = len(trace)
+
+        # 编码 + 压缩
+        pb = encode_problem(clauses, n_vars)
+        tb = encode_trace(trace)
+
+        C_p, C_cond, lambda_v1, lambda_A, lambda_B = structural_measures(pb, tb)
+
+        log2_T = math.log2(T) if T > 0 else float("-inf")
+        log2_n = math.log2(n_vars)
+        log2_trace = math.log2(trace_len) if trace_len > 0 else float("-inf")
+
+        print(
+            f"[{i}/{n_samples}] n={n_vars}, m={n_clauses}, "
+            f"sat={sat}, timeout={timeout}, T={T:.6f}s, "
+            f"λ_B={lambda_B:.4f}, |trace|={trace_len}"
+        )
+
+        rows.append({
+            "n_vars": n_vars,
+            "n_clauses": n_clauses,
+            "ratio": n_clauses / n_vars,
+            "T": T,
+            "log2_T": log2_T,
+            "log2_n": log2_n,
+            "sat": sat,
+            "timeout": timeout,
+            "trace_len": trace_len,
+            "log2_trace": log2_trace,
+            "C_p": C_p,
+            "C_cond": C_cond,
+            "lambda_v1": lambda_v1,
+            "lambda_A": lambda_A,
+            "lambda_B": lambda_B,
+        })
+
+    df = pd.DataFrame(rows)
+    return df
+
+# 实验主程序
+df = run_experiment(
+    n_min=20,
+    n_max=40,
+    ratio=4.2,
+    n_samples=50,
+    time_limit=1.0  # 每个实例 1 秒超时
+)
+
+csv_name = "scct_3sat_results_v2_two_laws.csv"
+df.to_csv(csv_name, index=False)
+print(f"\n实验数据已保存为 {csv_name}\n")
+
+print("=== 实验数据预览 ===")
+print(df.head())
+
+print("\n=== 描述统计 ===")
+print(df.describe(include="all"))
+
+# =========================
+# 5. 数据清洗 + 两条定律的回归
+# =========================
+
+# [FIX] 过滤超时 + 过滤 T 过小 + trace_len=0 的行
+df_valid = df[
+    (~df["timeout"]) &
+    (df["T"] > 1e-6) &
+    (df["trace_len"] > 0)
+].copy()
+
+# 替换 inf -> NaN 再 dropna
+df_valid = df_valid.replace([np.inf, -np.inf], np.nan).dropna(
+    subset=["log2_T", "log2_n", "lambda_B", "log2_trace"]
+)
+
+print("\n=== 有效数据量 ===")
+print(df_valid.shape)
+
+def linear_regression_2d(x1, x2, y):
+    """
+    简单 OLS: y = a * x1 + b * x2 + c
+    返回 (a, b, c, R^2)
+    """
+    X = np.column_stack([x1, x2, np.ones_like(x1)])
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    a, b, c = coef
+    y_pred = X @ coef
+    ss_res = np.sum((y - y_pred) ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return a, b, c, r2
+
+# ---------- Structure–Time Law ----------
+lamB = df_valid["lambda_B"].to_numpy()
+log2_n = df_valid["log2_n"].to_numpy()
+log2_T = df_valid["log2_T"].to_numpy()
+alpha_T, beta_T, gamma_T, r2_T = linear_regression_2d(lamB, log2_n, log2_T)
+coef_T_prefactor = 2 ** gamma_T
+
+print("\n=== 结构–时间定律（Structure–Time Law） ===")
+print("模型：log2 T(x) ≈ α λ_B + β log2 n + γ")
+print(f"α ≈ {alpha_T:7.3f}, β ≈ {beta_T:7.3f}, γ ≈ {gamma_T:7.3f}, R^2 ≈ {r2_T:6.3f}")
+print(f"等价于：T(x) ≈ {coef_T_prefactor:.3e} · n^{beta_T:5.3f} · 2^({alpha_T:5.3f} λ_B)")
+
+# ---------- Structure–Work Law ----------
+log2_trace = df_valid["log2_trace"].to_numpy()
+alpha_W, beta_W, gamma_W, r2_W = linear_regression_2d(lamB, log2_n, log2_trace)
+coef_W_prefactor = 2 ** gamma_W
+
+print("\n=== 结构–工作量定律（Structure–Work Law） ===")
+print("模型：log2 |trace(x)| ≈ α' λ_B + β' log2 n + γ'")
+print(f"α' ≈ {alpha_W:7.3f}, β' ≈ {beta_W:7.3f}, γ' ≈ {gamma_W:7.3f}, R^2 ≈ {r2_W:6.3f}")
+print(f"等价于：|trace(x)| ≈ {coef_W_prefactor:.3e} · n^{beta_W:5.3f} · 2^({alpha_W:5.3f} λ_B)")
+
+# =========================
+# 6. 相关系数矩阵
+# =========================
+
+corr_cols = ["lambda_B", "log2_n", "log2_T", "log2_trace", "trace_len"]
+corr_matrix = df_valid[corr_cols].corr()
+print("\n=== 相关系数矩阵（λ_B 为核心） ===")
+print(corr_matrix.round(4))
+
+# =========================
+# 7. 作图（两条定律）
+# =========================
+
+def plot_scatter_with_fit(x, y, x_label, y_label, fig_name):
+    """
+    简单散点 + 一维拟合线（对 x 做线性拟合）。
+    """
+    plt.figure(figsize=(6, 4))
+    plt.scatter(x, y, alpha=0.7)
+    # 一维线性拟合 y = a x + b
+    X = np.column_stack([x, np.ones_like(x)])
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    a, b = coef
+    x_grid = np.linspace(min(x), max(x), 200)
+    y_grid = a * x_grid + b
+    plt.plot(x_grid, y_grid)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.tight_layout()
+    plt.savefig(fig_name, dpi=200)
+    plt.close()
+    print(f"已保存图像： {fig_name}")
+
+plot_scatter_with_fit(
+    lamB,
+    log2_T,
+    x_label=r"$\lambda_B$",
+    y_label=r"$\log_2 T(x)$",
+    fig_name="fig_ST_law_log2T_vs_lambdaB_v2.png"
+)
+
+plot_scatter_with_fit(
+    lamB,
+    log2_trace,
+    x_label=r"$\lambda_B$",
+    y_label=r"$\log_2 |\mathrm{trace}(x)|$",
+    fig_name="fig_SW_law_log2trace_vs_lambdaB_v2.png"
+)
+
+# =========================
+# 8. LaTeX 片段自动生成（两条定律）
+# =========================
+
+print("\n=== LaTeX 片段：结构–时间定律（可贴入论文） ===\n")
+print(r"% --- Structure–Time Law (3-SAT + DPLL, wall-clock time, v2) ---")
+print(r"For random 3-SAT instances with $n \in [20, 40]$ and clause density $m/n \approx 4.2$")
+print(r"solved by a DPLL-style backtracking algorithm, we estimate the time-bounded")
+print(r"structural compression ratio by")
+print(r"\[")
+print(r"  \lambda_k^t(x) := \lambda_B(x) = \frac{C_t(\mathrm{trace}(x)\mid \mathrm{problem}(x))}{C_t(\mathrm{problem}(x)) + C_t(\mathrm{trace}(x)\mid \mathrm{problem}(x))} .")
+print(r"\]")
+print(r"We then fit the Structure--Time Law")
+print(r"\[")
+print(r"  \log_2 T(x) \approx \alpha \lambda_k^t(x) + \beta \log_2 n + \gamma.")
+print(r"\]")
+print(r"A representative fit yields")
+print(r"\[")
+print(f"  \\alpha \\approx {alpha_T:5.3f}, \\quad")
+print(f"  \\beta \\approx {beta_T:5.3f}, \\quad")
+print(f"  \\gamma \\approx {gamma_T:5.3f}, \\quad")
+print(f"  R^2 \\approx {r2_T:5.3f},")
+print(r"\]")
+print(r"which is equivalent to")
+print(r"\[")
+print(f"  T(x) \\approx {coef_T_prefactor:.3e} \\, n^{{{beta_T:5.3f}}} \\, 2^{{{alpha_T:5.3f}\\,\\lambda_k^t(x)}}.")
+print(r"\]")
+
+print("\n=== LaTeX 片段：结构–工作量定律（可贴入论文） ===\n")
+print(r"% --- Structure–Work Law (3-SAT + DPLL, search-tree size, v2) ---")
+print(r"In terms of the search-tree size, measured by the DPLL trace length $|\mathrm{trace}(x)|$,")
+print(r"we fit the Structure--Work Law")
+print(r"\[")
+print(r"  \log_2 |\mathrm{trace}(x)| \approx \alpha' \lambda_k^t(x) + \beta' \log_2 n + \gamma'.")
+print(r"\]")
+print(r"A representative fit yields")
+print(r"\[")
+print(f"  \\alpha' \\approx {alpha_W:5.3f}, \\quad")
+print(f"  \\beta' \\approx {beta_W:5.3f}, \\quad")
+print(f"  \\gamma' \\approx {gamma_W:5.3f}, \\quad")
+print(f"  R^2 \\approx {r2_W:5.3f},")
+print(r"\]")
+print(r"which corresponds to")
+print(r"\[")
+print(f"  |\\mathrm{{trace}}(x)| \\approx {coef_W_prefactor:.3e} \\, n^{{{beta_W:5.3f}}} \\, 2^{{{alpha_W:5.3f}\\,\\lambda_k^t(x)}}.")
+print(r"\]")
+
