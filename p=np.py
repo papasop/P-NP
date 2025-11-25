@@ -69,7 +69,7 @@ class AdvancedStateEncoder:
         self.baseline = self._compress({})
         self.state_cache = {}
         
-        # 注意：baseline 为压缩空对象的长度，用作归一化基准
+        # baseline 为压缩空对象的长度，用作归一化基准
         # 这样 λ 始终在 (0,1) 区间内，便于比较不同状态的相对复杂度
     
     def _compress(self, obj) -> int:
@@ -526,9 +526,8 @@ class VisualizationSystem:
             'TSP Heuristic': np.random.normal(0.4, 0.1, 100)
         }
         
-        # ▼ 修改：labels → tick_labels，消除 Matplotlib 3.10 的弃用警告 ▼
+        # 使用 tick_labels，避免 Matplotlib 弃用警告
         boxes = ax3.boxplot(density_data.values(), tick_labels=density_data.keys())
-        # ▲ 修改结束 ▲
         
         ax3.set_ylabel('Structural Density λ')
         ax3.set_title('Structural Density Distribution')
@@ -717,13 +716,12 @@ def generate_comprehensive_report(baseline_results: Dict[str, Any],
     print("\n1. BASELINE EXPERIMENT: P vs NP SEPARATION")
     print("-" * 60)
     
-    # ▼ 修改：为不同算法给出更精确的类型说明 ▼
+    # 为不同算法给出更精确的类型说明
     algo_type_map = {
         "mst_prim": "P (Polynomial)",
         "tsp_exact": "NP-complete (Exponential)",
         "tsp_heuristic": "NP-complete (Polynomial Heuristic)"
     }
-    # ▲ 修改结束 ▲
     
     for algo_name, results in baseline_results.items():
         ns = [r['n'] for r in results]
@@ -755,7 +753,7 @@ def generate_comprehensive_report(baseline_results: Dict[str, Any],
             print(f"  {algorithm.upper():<12}: β={slope:.4f}, R²={r_squared:.3f}, "
                   f"consistency={consistency:.3f}, achievement={achievement:.1%} {status}")
     
-    # 102%现象重点报告
+    # 102%现象重点报告（修复“50× closer”计算）
     print("\n3. 102% PHENOMENON: STRUCTURAL BOUND TIGHTNESS")
     print("-" * 60)
     cdcl_3sat_slope = np_spectrum_results['3sat']['cdcl']['validation']['slope']
@@ -766,10 +764,13 @@ def generate_comprehensive_report(baseline_results: Dict[str, Any],
     print(f"  Theoretical Lower Bound: β_min = {theoretical_bound:.3f}")
     print(f"  Achievement Ratio: {achievement_ratio:.3f} ({achievement_ratio:.1%})")
     print(f"  Gap: {gap_percentage:.2f}%")
+    
+    reference_tolerance = 5.0  # 以 5% 作为“容许误差”的对比基准
     if gap_percentage != 0:
-        print(f"  Interpretation: CDCL achieves {100/gap_percentage:.0f}× closer to bound than 5% tolerance")
+        closer_factor = reference_tolerance / abs(gap_percentage)
+        print(f"  Interpretation: CDCL is {closer_factor:.1f}× closer to the bound than a {reference_tolerance:.0f}% tolerance")
     else:
-        print(f"  Interpretation: CDCL matches the theoretical bound exactly within numerical precision")
+        print(f"  Interpretation: CDCL matches the theoretical bound within numerical precision")
     
     # 总体结论
     print(f"\n4. OVERALL CONCLUSIONS:")
