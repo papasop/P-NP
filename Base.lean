@@ -51,7 +51,7 @@ def energy {n : Nat} (Φ : CNF n) (σ : Assignment n) : Nat :=
       acc + (if ok then 0 else 1))
     0
 
-/-- 这里暂时用 axiom：满足 ↔ 能量为 0。  
+/-- 暂时用 axiom：满足 ↔ 能量为 0。  
     将来你可以用真正的归纳证明替掉。 -/
 axiom sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   σ ∈ satSet Φ ↔ energy Φ σ = 0
@@ -83,7 +83,7 @@ def ConfigGraph (n : Nat) : SimpleGraph (Assignment n) where
     have hEmpty :
       (Finset.univ.filter fun i : Fin n => σ i ≠ σ i)
       = (∅ : Finset (Fin n)) := by
-      -- 这里用新的名字 eq_empty_iff_forall_notMem
+      -- 使用新的 eq_empty_iff_forall_notMem
       apply Finset.eq_empty_iff_forall_notMem.mpr
       intro i hi
       simp at hi
@@ -139,7 +139,7 @@ def time {n : Nat} {A : AlgorithmModel n} {Φ : CNF n}
   ψ.T
 
 
-/-! ### 6. 能量子水平集（简单版本） -/
+/-! ### 6. 能量子水平集 -/
 
 /-- 能量 ≤ k 的子水平集 -/
 def sublevel {n : Nat} (Φ : CNF n) (k : Nat) : Set (Assignment n) :=
@@ -352,21 +352,17 @@ lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
 /-- 对 DPLL 状态：`isSatisfied` 等价于能量为 0。 -/
 lemma DPLLState.isSatisfied_iff_energy_zero {n : Nat} (s : DPLLState n) :
     DPLLState.isSatisfied s ↔ DPLLState.energy s = 0 := by
-  -- 把目标改写成 cnfEval = true 的形式
-  change cnfEval s.assign s.formula = true ↔ energy s.formula s.assign = 0
-  -- 用全局的 sat_iff_energy_zero
+  -- 全局 lemma：sat_iff_energy_zero
   have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  -- 把 membership 展开成 cnfEval = true
-  simp [satSet] at h
-  exact h
+  -- 左边 membership 展开成 cnfEval = true
+  -- 右边 energy 展开成 DPLLState.energy
+  simpa [DPLLState.isSatisfied, DPLLState.energy, satSet] using h
 
 /-- 对 CDCL 状态：`isSatisfied` 等价于能量为 0。 -/
 lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
     CDCLState.isSatisfied s ↔ CDCLState.energy s = 0 := by
-  change cnfEval s.assign s.formula = true ↔ energy s.formula s.assign = 0
   have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  simp [satSet] at h
-  exact h
+  simpa [CDCLState.isSatisfied, CDCLState.energy, satSet] using h
 
 
 /-! ### 13. 方便记号：DPLLPath / CDCLPath -/
@@ -509,7 +505,7 @@ instance instHasStateProjCDCL (n : Nat) : HasStateProj n (CDCLModel n) where
   - 算法状态空间到赋值空间的投影，
   - 使得计算轨迹 ψ 在赋值空间中可以看作一条路径。
 
-`action_lower_bound_from_barrier` 则封装你希望建立的核心原则：
+`action_lower_bound_from_barrier` 封装你希望建立的核心原则：
   > “如果任意求解轨迹必须穿越能量障碍 B，
   >  并且结构密度与能量有单调关系，
   >  那么任何求解轨迹的结构作用量 A[ψ] 至少为 c * B。”
