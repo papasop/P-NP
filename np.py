@@ -1,513 +1,669 @@
-# ==============================
-# 完整深入优化版：理论校准 + 多维度验证
-# 系统性解决下界问题，提供严格验证
-# ==============================
+import Mathlib
 
-import random
-import json
-import statistics
-import math
-import numpy as np
-import matplotlib.pyplot as plt
-import gzip
-import scipy.optimize as opt
-from datetime import datetime
-from typing import Dict, List, Any, Tuple
+open scoped BigOperators
 
-random.seed(42)
-np.random.seed(42)
+namespace StructuralAction
 
-class TheoreticalCalibrator:
-    """理论校准器：解决下界超出问题"""
-    
-    @staticmethod
-    def analyze_bias_pattern(experimental_data: List[Tuple[int, float]]) -> Dict[str, float]:
-        """分析实验数据的偏差模式"""
-        n_values = [data[0] for data in experimental_data]
-        logA_values = [data[1] for data in experimental_data]
-        
-        # 拟合实际斜率
-        actual_slope, actual_intercept = np.polyfit(n_values, logA_values, 1)
-        
-        # 理论下界参数
-        theoretical_slope = 0.101
-        
-        # 分析偏差类型
-        bias_analysis = {
-            'actual_slope': actual_slope,
-            'theoretical_slope': theoretical_slope,
-            'slope_ratio': actual_slope / theoretical_slope,
-            'absolute_bias': actual_slope - theoretical_slope,
-            'relative_bias': (actual_slope - theoretical_slope) / theoretical_slope,
-            'intercept': actual_intercept
-        }
-        
-        return bias_analysis
-    
-    @staticmethod
-    def calibrate_measurement(raw_action: float, n: int, calibration_params: Dict) -> float:
-        """校准测量结果"""
-        # 多种校准策略
-        if calibration_params['method'] == 'multiplicative':
-            return raw_action * calibration_params['factor']
-        elif calibration_params['method'] == 'subtractive':
-            return max(0.1, raw_action - calibration_params['offset'] * n)
-        elif calibration_params['method'] == 'exponential':
-            return raw_action / (calibration_params['base'] ** n)
-        else:
-            return raw_action
+/-! ### 1. 3-SAT 基础语法 -/
 
-class AdvancedStateEncoder:
-    """高级状态编码器：优化状态表示"""
-    
-    def __init__(self):
-        self.baseline = self._compress({})
-        self.state_cache = {}
-        
-    def _compress(self, obj) -> int:
-        """优化的压缩方法"""
-        # 使用最紧凑的JSON编码
-        s = json.dumps(obj, separators=(",", ":"), ensure_ascii=False, sort_keys=True)
-        return len(gzip.compress(s.encode('utf-8')))
-    
-    def encode_optimized_state(self, state_type: str, problem_size: int, 
-                             progress: float, complexity_class: str) -> Dict:
-        """优化的状态编码"""
-        
-        base_state = {
-            "t": state_type[:2],  # 前两个字符作为类型标识
-            "n": problem_size,
-            "p": round(progress, 3)  # 减少精度节省空间
-        }
-        
-        # 根据问题类型添加特定字段
-        if complexity_class == "3sat":
-            base_state.update({
-                "d": int(progress * problem_size * 0.8),  # decisions
-                "c": max(1, int(progress * problem_size * 0.3)),  # conflicts
-                "l": int(progress * problem_size * 0.2)  # learned
-            })
-        elif complexity_class == "coloring":
-            base_state.update({
-                "v": int(progress * problem_size),  # vertices colored
-                "e": problem_size * 2,  # estimated edges
-                "k": 3  # colors
-            })
-        elif complexity_class == "hamilton":
-            base_state.update({
-                "pl": int(progress * problem_size),  # path length
-                "bt": int(progress * problem_size * 0.4)  # backtracks
-            })
-        
-        return base_state
-    
-    def compute_structural_density(self, state: Dict, method: str = "normalized") -> float:
-        """计算结构密度（多种方法）"""
-        state_complexity = self._compress(state)
-        
-        if method == "normalized":
-            return state_complexity / (self.baseline + state_complexity)
-        elif method == "logarithmic":
-            return math.log2(state_complexity) / math.log2(self.baseline + state_complexity)
-        elif method == "information_theoretic":
-            return state_complexity / (self.baseline + math.log2(state_complexity))
-        else:
-            return state_complexity / (self.baseline + state_complexity)
+/-- 布尔赋值：`n` 个变量，对应 `Fin n → Bool` -/
+abbrev Assignment (n : Nat) := Fin n → Bool
 
-class MultiAlgorithmSolver:
-    """多算法求解器：对比不同算法策略"""
-    
-    def __init__(self):
-        self.encoder = AdvancedStateEncoder()
-        self.calibrator = TheoreticalCalibrator()
-        
-    def simulate_algorithm(self, problem_type: str, n: int, 
-                         algorithm: str = "cdcl") -> Tuple[float, List[Dict]]:
-        """模拟不同算法策略"""
-        
-        if algorithm == "cdcl":
-            return self._simulate_cdcl(problem_type, n)
-        elif algorithm == "dpll":
-            return self._simulate_dpll(problem_type, n)
-        elif algorithm == "backtrack":
-            return self._simulate_backtrack(problem_type, n)
-        else:
-            return self._simulate_optimal(problem_type, n)
-    
-    def _simulate_cdcl(self, problem_type: str, n: int) -> Tuple[float, List[Dict]]:
-        """模拟现代CDCL算法"""
-        trace = []
-        total_action = 0
-        
-        # 动态轨迹长度 - 基于理论预期
-        base_phases = int(30 + 1.8 ** (n / 4.0))  # 更保守的增长
-        
-        for phase in range(1, base_phases + 1):
-            progress = phase / base_phases
-            
-            state = self.encoder.encode_optimized_state(
-                "state", n, progress, problem_type
-            )
-            
-            lambda_t = self.encoder.compute_structural_density(state, "normalized")
-            total_action += lambda_t
-            trace.append(state)
-        
-        return total_action, trace
-    
-    def _simulate_dpll(self, problem_type: str, n: int) -> Tuple[float, List[Dict]]:
-        """模拟经典DPLL算法"""
-        trace = []
-        total_action = 0
-        
-        # DPLL通常有更简单的状态
-        base_phases = int(20 + 1.9 ** (n / 3.8))
-        
-        for phase in range(1, base_phases + 1):
-            progress = phase / base_phases
-            
-            state = self.encoder.encode_optimized_state(
-                "dpll", n, progress, problem_type
-            )
-            # DPLL状态更简单
-            if "c" in state: state["c"] = state["c"] // 2
-            if "l" in state: state["l"] = 0  # 没有学习
-            
-            lambda_t = self.encoder.compute_structural_density(state, "normalized")
-            total_action += lambda_t
-            trace.append(state)
-        
-        return total_action, trace
-    
-    def _simulate_backtrack(self, problem_type: str, n: int) -> Tuple[float, List[Dict]]:
-        """模拟朴素回溯算法"""
-        trace = []
-        total_action = 0
-        
-        # 回溯算法状态更简单但轨迹更长
-        base_phases = int(10 + 2.0 ** (n / 3.5))
-        
-        for phase in range(1, base_phases + 1):
-            progress = phase / base_phases
-            
-            state = self.encoder.encode_optimized_state(
-                "bt", n, progress, problem_type
-            )
-            # 回溯算法状态最简单
-            state = {"t": "bt", "n": n, "p": round(progress, 3)}
-            
-            lambda_t = self.encoder.compute_structural_density(state, "normalized")
-            total_action += lambda_t
-            trace.append(state)
-        
-        return total_action, trace
+/-- 字面：变量索引 + 是否取反 -/
+structure Literal (n : Nat) where
+  var : Fin n
+  neg : Bool
 
-class ComprehensiveValidator:
-    """综合性验证器：多维度验证结果"""
-    
-    @staticmethod
-    def validate_exponential_growth(data: List[Tuple[int, float]]) -> Dict[str, Any]:
-        """验证指数增长模式"""
-        n_values = [d[0] for d in data]
-        logA_values = [d[1] for d in data]
-        
-        # 线性拟合检验指数性
-        slope, intercept = np.polyfit(n_values, logA_values, 1)
-        r_squared = np.corrcoef(n_values, logA_values)[0, 1] ** 2
-        
-        # 检验增长的一致性
-        growth_rates = []
-        for i in range(1, len(n_values)):
-            rate = (logA_values[i] - logA_values[i-1]) / (n_values[i] - n_values[i-1])
-            growth_rates.append(rate)
-        
-        growth_consistency = np.std(growth_rates) / np.mean(growth_rates)
-        
-        return {
-            'slope': slope,
-            'intercept': intercept,
-            'r_squared': r_squared,
-            'growth_consistency': growth_consistency,
-            'is_exponential': r_squared > 0.95 and growth_consistency < 0.3
-        }
-    
-    @staticmethod
-    def compare_with_theoretical_bounds(experimental_slope: float, 
-                                      theoretical_bounds: Dict[str, float]) -> Dict[str, Any]:
-        """与理论边界比较"""
-        comparisons = {}
-        
-        for bound_name, bound_value in theoretical_bounds.items():
-            ratio = experimental_slope / bound_value
-            difference = experimental_slope - bound_value
-            
-            comparisons[bound_name] = {
-                'ratio': ratio,
-                'difference': difference,
-                'status': 'above' if ratio > 1.0 else 'below',
-                'deviation': (ratio - 1.0) * 100
-            }
-        
-        return comparisons
+/-- 子句：3 个字面 -/
+abbrev Clause (n : Nat) := Fin 3 → Literal n
 
-class UltimateExperiment:
-    """终极实验框架"""
-    
-    def __init__(self):
-        self.solver = MultiAlgorithmSolver()
-        self.validator = ComprehensiveValidator()
-        self.calibrator = TheoreticalCalibrator()
-        
-        # 理论边界定义
-        self.theoretical_bounds = {
-            'papa_lower': 0.101,      # Papadimitriou风格下界
-            'current_best': 0.157,    # 当前最佳算法上界
-            'naive_upper': 1.0,       # 朴素算法上界
-            'expected_range': 0.08    # 预期合理范围
-        }
-    
-    def run_comprehensive_analysis(self) -> Dict[str, Any]:
-        """运行综合性分析"""
-        print("终极综合分析".center(80, "="))
-        
-        problems = {
-            "3sat": range(10, 36, 5),
-            "coloring": range(8, 25, 4),
-            "hamilton": range(6, 18, 3)
-        }
-        
-        algorithms = ["cdcl", "dpll", "backtrack"]
-        
-        all_results = {}
-        
-        for problem in problems:
-            print(f"\n{problem.upper()} 问题分析:")
-            all_results[problem] = {}
-            
-            for algorithm in algorithms:
-                print(f"  算法: {algorithm}")
-                results = self._run_algorithm_analysis(problem, problems[problem], algorithm)
-                all_results[problem][algorithm] = results
-        
-        return all_results
-    
-    def _run_algorithm_analysis(self, problem: str, n_range: range, 
-                              algorithm: str) -> Dict[str, Any]:
-        """运行单个算法分析"""
-        results = []
-        
-        for n in n_range:
-            actions = []
-            for _ in range(2):  # 减少实例数，增加算法种类
-                action, trace = self.solver.simulate_algorithm(problem, n, algorithm)
-                actions.append(action)
-            
-            median_action = statistics.median(actions)
-            results.append({
-                'n': n,
-                'median_A': median_action,
-                'log2_median': math.log2(median_action),
-                'algorithm': algorithm
-            })
-        
-        # 验证指数增长
-        validation_data = [(r['n'], r['log2_median']) for r in results]
-        growth_validation = self.validator.validate_exponential_growth(validation_data)
-        
-        # 理论比较
-        theoretical_comparison = self.validator.compare_with_theoretical_bounds(
-            growth_validation['slope'], self.theoretical_bounds
-        )
-        
-        return {
-            'results': results,
-            'validation': growth_validation,
-            'theory_comparison': theoretical_comparison
-        }
+/-- CNF 公式：子句列表 -/
+abbrev CNF (n : Nat) := List (Clause n)
 
-def create_comprehensive_visualization(all_results: Dict[str, Any]):
-    """创建综合性可视化"""
-    fig = plt.figure(figsize=(20, 15))
-    
-    # 颜色和标记定义
-    algorithm_colors = {'cdcl': '#1f77b4', 'dpll': '#ff7f0e', 'backtrack': '#2ca02c'}
-    problem_markers = {'3sat': 'o', 'coloring': 's', 'hamilton': '^'}
-    
-    # 1. 主要增长趋势对比
-    ax1 = plt.subplot(2, 3, 1)
-    for problem, algorithms in all_results.items():
-        for algorithm, data in algorithms.items():
-            results = data['results']
-            ns = [r['n'] for r in results]
-            log2A = [r['log2_median'] for r in results]
-            
-            ax1.plot(ns, log2A, 
-                    marker=problem_markers[problem],
-                    color=algorithm_colors[algorithm],
-                    linestyle='-',
-                    label=f'{problem}-{algorithm}',
-                    alpha=0.7)
-    
-    # 添加理论边界线
-    theoretical_n = [10, 35]
-    for bound_name, bound_value in ultimate_experiment.theoretical_bounds.items():
-        if bound_name in ['papa_lower', 'expected_range']:
-            theoretical_line = [bound_value * n for n in theoretical_n]
-            ax1.plot(theoretical_n, theoretical_line, '--', 
-                    label=f'Theoretical {bound_name}', alpha=0.5)
-    
-    ax1.set_xlabel('Problem Size (n)')
-    ax1.set_ylabel('log₂ Structural Action A[ψ]')
-    ax1.set_title('Multi-Algorithm Complexity Growth')
-    ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax1.grid(True, alpha=0.3)
-    
-    # 2. 斜率比较
-    ax2 = plt.subplot(2, 3, 2)
-    slopes_data = []
-    labels = []
-    
-    for problem, algorithms in all_results.items():
-        for algorithm, data in algorithms.items():
-            slope = data['validation']['slope']
-            slopes_data.append(slope)
-            labels.append(f'{problem}\n{algorithm}')
-    
-    bars = ax2.bar(range(len(slopes_data)), slopes_data, 
-                  color=[algorithm_colors[label.split('\n')[1]] for label in labels])
-    ax2.set_xticks(range(len(slopes_data)))
-    ax2.set_xticklabels(labels, rotation=45)
-    ax2.set_ylabel('Growth Slope')
-    ax2.set_title('Algorithm Slope Comparison')
-    ax2.axhline(y=0.101, color='red', linestyle='--', label='Theoretical bound')
-    
-    for bar, slope in zip(bars, slopes_data):
-        ax2.text(bar.get_x() + bar.get_width()/2, slope + 0.002, 
-                f'{slope:.4f}', ha='center', va='bottom', fontsize=8)
-    
-    # 3. 理论边界达成率
-    ax3 = plt.subplot(2, 3, 3)
-    achievement_data = []
-    achievement_labels = []
-    
-    for problem, algorithms in all_results.items():
-        for algorithm, data in algorithms.items():
-            slope = data['validation']['slope']
-            achievement = slope / 0.101
-            achievement_data.append(achievement)
-            achievement_labels.append(f'{problem}\n{algorithm}')
-    
-    bars = ax3.bar(range(len(achievement_data)), achievement_data,
-                  color=['green' if a <= 1.0 else 'red' for a in achievement_data])
-    ax3.set_xticks(range(len(achievement_data)))
-    ax3.set_xticklabels(achievement_labels, rotation=45)
-    ax3.set_ylabel('Achievement Ratio')
-    ax3.set_title('Theoretical Bound Achievement')
-    ax3.axhline(y=1.0, color='black', linestyle='-', alpha=0.5)
-    
-    for bar, achievement in zip(bars, achievement_data):
-        ax3.text(bar.get_x() + bar.get_width()/2, achievement + 0.02, 
-                f'{achievement:.1%}', ha='center', va='bottom', fontsize=8)
-    
-    # 4. 增长一致性分析
-    ax4 = plt.subplot(2, 3, 4)
-    consistency_data = []
-    consistency_labels = []
-    
-    for problem, algorithms in all_results.items():
-        for algorithm, data in algorithms.items():
-            consistency = data['validation']['growth_consistency']
-            consistency_data.append(consistency)
-            consistency_labels.append(f'{problem}\n{algorithm}')
-    
-    ax4.bar(range(len(consistency_data)), consistency_data,
-           color=['lightblue' for _ in consistency_data])
-    ax4.set_xticks(range(len(consistency_data)))
-    ax4.set_xticklabels(consistency_labels, rotation=45)
-    ax4.set_ylabel('Growth Consistency (CV)')
-    ax4.set_title('Growth Pattern Consistency')
-    ax4.axhline(y=0.3, color='red', linestyle='--', label='Threshold')
-    
-    # 5. R²值分析
-    ax5 = plt.subplot(2, 3, 5)
-    r_squared_data = []
-    r_squared_labels = []
-    
-    for problem, algorithms in all_results.items():
-        for algorithm, data in algorithms.items():
-            r_squared = data['validation']['r_squared']
-            r_squared_data.append(r_squared)
-            r_squared_labels.append(f'{problem}\n{algorithm}')
-    
-    ax5.bar(range(len(r_squared_data)), r_squared_data,
-           color=['lightgreen' for _ in r_squared_data])
-    ax5.set_xticks(range(len(r_squared_data)))
-    ax5.set_xticklabels(r_squared_labels, rotation=45)
-    ax5.set_ylabel('R² Value')
-    ax5.set_title('Exponential Fit Quality')
-    ax5.axhline(y=0.95, color='red', linestyle='--', label='Threshold')
-    
-    # 6. 算法效率对比
-    ax6 = plt.subplot(2, 3, 6)
-    efficiency_data = []
-    efficiency_labels = []
-    
-    for problem, algorithms in all_results.items():
-        for algorithm, data in algorithms.items():
-            # 使用斜率倒数作为效率指标
-            efficiency = 1.0 / data['validation']['slope'] if data['validation']['slope'] > 0 else 0
-            efficiency_data.append(efficiency)
-            efficiency_labels.append(f'{problem}\n{algorithm}')
-    
-    ax6.bar(range(len(efficiency_data)), efficiency_data,
-           color=['gold' for _ in efficiency_data])
-    ax6.set_xticks(range(len(efficiency_data)))
-    ax6.set_xticklabels(efficiency_labels, rotation=45)
-    ax6.set_ylabel('Efficiency (1/slope)')
-    ax6.set_title('Algorithm Efficiency Comparison')
-    
-    plt.tight_layout()
-    plt.show()
+/-- 评价字面 -/
+def literalEval {n : Nat} (σ : Assignment n) (ℓ : Literal n) : Bool :=
+  let b := σ ℓ.var
+  if ℓ.neg then !b else b
 
-def generate_comprehensive_report(all_results: Dict[str, Any]):
-    """生成综合性报告"""
-    print("\n" + "="*100)
-    print("终极综合分析报告")
-    print("="*100)
-    
-    theoretical_bound = 0.101
-    
-    for problem, algorithms in all_results.items():
-        print(f"\n{problem.upper()} PROBLEM SUMMARY:")
-        print("-" * 60)
-        
-        for algorithm, data in algorithms.items():
-            slope = data['validation']['slope']
-            r_squared = data['validation']['r_squared']
-            consistency = data['validation']['growth_consistency']
-            achievement = slope / theoretical_bound
-            
-            status = "✅ WITHIN BOUNDS" if achievement <= 1.0 else "⚠️ EXCEEDS BOUNDS"
-            
-            print(f"  {algorithm.upper():<12}: slope={slope:.4f}, R²={r_squared:.3f}, "
-                  f"consistency={consistency:.3f}, achievement={achievement:.1%} {status}")
-    
-    # 总体结论
-    print(f"\nOVERALL CONCLUSIONS:")
-    print(f"1. 结构作用量框架在多种算法上得到验证")
-    print(f"2. 不同算法显示出不同的复杂性特征")
-    print(f"3. 需要进一步校准以匹配理论边界")
-    print(f"4. 框架为算法复杂性分析提供了新工具")
+/-- 评价 3-子句 -/
+def clauseEval {n : Nat} (σ : Assignment n) (C : Clause n) : Bool :=
+  let ℓ0 := C ⟨0, by decide⟩
+  let ℓ1 := C ⟨1, by decide⟩
+  let ℓ2 := C ⟨2, by decide⟩
+  literalEval σ ℓ0 || literalEval σ ℓ1 || literalEval σ ℓ2
 
-# 运行终极实验
-if __name__ == "__main__":
-    print("启动终极综合分析实验")
-    print("=" * 80)
-    
-    ultimate_experiment = UltimateExperiment()
-    all_results = ultimate_experiment.run_comprehensive_analysis()
-    
-    create_comprehensive_visualization(all_results)
-    generate_comprehensive_report(all_results)
-    
-    print(f"\n实验完成！提供了多算法、多问题的全面复杂性分析。")
+/-- 评价 CNF：所有子句的合取 -/
+def cnfEval {n : Nat} (σ : Assignment n) (Φ : CNF n) : Bool :=
+  Φ.foldr (fun C acc => clauseEval σ C && acc) true
+
+/-- 满足解集合 -/
+def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
+  { σ | cnfEval σ Φ = true }
+
+
+/-! ### 2. 能量函数 E：未满足子句个数 -/
+
+/-- 能量：未满足子句数量 -/
+def energy {n : Nat} (Φ : CNF n) (σ : Assignment n) : Nat :=
+  Φ.foldr
+    (fun C acc =>
+      let ok := clauseEval σ C
+      acc + (if ok then 0 else 1))
+    0
+
+/-- 目前先作为公理使用：σ 满足当且仅当能量为 0。
+    将来可以用真正的证明替代。 -/
+axiom sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
+  σ ∈ satSet Φ ↔ energy Φ σ = 0
+
+
+/-! ### 3. 配置图（汉明距离 1） -/
+
+/-- 汉明距离 1 的邻接关系 -/
+def neighbor {n : Nat} (σ τ : Assignment n) : Prop :=
+  (Finset.univ.filter (fun i : Fin n => σ i ≠ τ i)).card = 1
+
+/-- 赋值空间上的简单图：边 = 汉明邻居 -/
+def ConfigGraph (n : Nat) : SimpleGraph (Assignment n) where
+  Adj σ τ := neighbor σ τ
+  symm := by
+    intro σ τ h
+    dsimp [neighbor] at h ⊢
+    have hset :
+      (Finset.univ.filter fun i : Fin n => σ i ≠ τ i)
+      =
+      (Finset.univ.filter fun i : Fin n => τ i ≠ σ i) := by
+      apply Finset.ext
+      intro i
+      simp [ne_comm]
+    simpa [hset] using h
+  loopless := by
+    intro σ h
+    dsimp [neighbor] at h
+    have hEmpty :
+      (Finset.univ.filter fun i : Fin n => σ i ≠ σ i)
+      = (∅ : Finset (Fin n)) := by
+      -- 使用新的 eq_empty_iff_forall_notMem
+      apply Finset.eq_empty_iff_forall_notMem.mpr
+      intro i hi
+      simp at hi
+    have hCard :
+      (Finset.univ.filter fun i : Fin n => σ i ≠ σ i).card = 0 := by
+      simpa [hEmpty] using (Finset.card_empty : (∅ : Finset (Fin n)).card = 0)
+    have : 0 = 1 := by
+      simpa [hCard] using h
+    exact zero_ne_one this
+
+
+/-! ### 4. 抽象算法模型 & 轨迹 ψ -/
+
+/-- 抽象算法模型：状态类型 + init + step + halting -/
+structure AlgorithmModel (n : Nat) where
+  StateType : Type
+  init     : CNF n → StateType
+  step     : CNF n → StateType → StateType
+  halting  : CNF n → StateType → Prop
+
+/-- 算法在公式 Φ 上的一条有限轨迹 ψ -/
+structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
+  T      : Nat
+  states : Fin (T+1) → A.StateType
+  h_init :
+    states ⟨0, Nat.succ_pos _⟩ = A.init Φ
+  h_step :
+    ∀ t : Fin T,
+      -- t : Fin T，需要先嵌入 Fin (T+1)
+      states ⟨t.1.succ, Nat.succ_lt_succ t.2⟩
+        = A.step Φ (states ⟨t.1, Nat.lt_trans t.2 (Nat.lt_succ_self _)⟩)
+  h_halt :
+    A.halting Φ (states ⟨T, Nat.lt_succ_self _⟩)
+
+
+/-! ### 5. 结构密度 λ 与作用量 A[ψ] -/
+
+/-- 抽象的结构密度（λ），后面你可以换成 λₖ / 压缩长度等真实定义。 -/
+noncomputable
+def structuralDensity {n : Nat} (A : AlgorithmModel n) :
+    A.StateType → Real :=
+  fun _ => 0
+
+/-- 结构作用量：A[ψ] = ∑ λ(s_t) -/
+noncomputable
+def action {n : Nat} {A : AlgorithmModel n} {Φ : CNF n}
+    (ψ : ComputationPath A Φ) : Real :=
+  ∑ t : Fin (ψ.T + 1), structuralDensity A (ψ.states t)
+
+/-- 时间步数：T -/
+def time {n : Nat} {A : AlgorithmModel n} {Φ : CNF n}
+    (ψ : ComputationPath A Φ) : Nat :=
+  ψ.T
+
+
+/-! ### 6. 能量子水平集 & 能量障碍（占位） -/
+
+/-- 能量 ≤ k 的子水平集 -/
+def sublevel {n : Nat} (Φ : CNF n) (k : Nat) : Set (Assignment n) :=
+  { σ | energy Φ σ ≤ k }
+
+/-- 能量障碍（占位版本）：真正版本之后可以用路径 infimum 定义 -/
+def energyBarrier {n : Nat} (_Φ : CNF n)
+    (_S₀ : Set (Assignment n)) : Nat :=
+  0
+
+
+/-! ### 7. 结构作用量与时间的 schema 定理（axiom 占位） -/
+
+/-- 假设：存在多项式界 P，使得 A[ψ] ≤ P(n) * time(ψ)。 -/
+axiom action_bounds_time
+  {n : Nat} (A : AlgorithmModel n) :
+  ∃ (P : Nat → Nat),
+    ∀ (Φ : CNF n) (ψ : ComputationPath A Φ),
+      action ψ ≤ (P n : Real) * (time ψ)
+
+/-- 假设：对某些公式族，所有 ψ 都有指数级结构作用量下界。 -/
+axiom exponential_action_lower_bound
+  {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) :
+  ∃ (γ : Real), γ > 0 ∧
+    ∀ (ψ : ComputationPath A Φ),
+      action ψ ≥ Real.exp (γ * (n : Real))
+
+/-- 示意性的结论占位：真正版本可以改成时间下界不等式。 -/
+theorem exponential_time_lower_bound_schematic
+  {n : Nat} (_A : AlgorithmModel n) (_Φ : CNF n) :
+  True := by
+  trivial
+
+
+/-! ### 8. DPLL 状态与模型 -/
+
+/-- DPLL 状态骨架 -/
+structure DPLLState (n : Nat) where
+  assign    : Assignment n
+  undecided : Finset (Fin n)
+  decisions : List (Fin n × Bool)
+  formula   : CNF n
+  conflict  : Bool
+
+/-- DPLL 状态的能量 -/
+def DPLLState.energy {n : Nat} (s : DPLLState n) : Nat :=
+  -- 注意这里显式写 StructuralAction.energy，避免与本函数名冲突
+  StructuralAction.energy s.formula s.assign
+
+/-- 当前赋值满足公式？ -/
+def DPLLState.isSatisfied {n : Nat} (s : DPLLState n) : Prop :=
+  cnfEval s.assign s.formula = true
+
+/-- 当前赋值产生语义冲突？ -/
+def DPLLState.hasConflict {n : Nat} (s : DPLLState n) : Prop :=
+  cnfEval s.assign s.formula = false
+
+/-- 所有变量都已决定？ -/
+def DPLLState.isComplete {n : Nat} (s : DPLLState n) : Prop :=
+  s.undecided = ∅
+
+/-- DPLL 终止状态：要么 SAT，要么 complete+conflict -/
+def DPLLState.isTerminal {n : Nat} (s : DPLLState n) : Prop :=
+  s.isSatisfied ∨ (s.hasConflict ∧ s.isComplete)
+
+/-- DPLL 初始状态：所有变量未决定，赋值全 false。 -/
+def DPLL.initState {n : Nat} (Φ : CNF n) : DPLLState n :=
+  { assign    := fun _ => false
+  , undecided := Finset.univ
+  , decisions := []
+  , formula   := Φ
+  , conflict  := false }
+
+/-- DPLL 单步转移（目前占位实现：恒等）。 -/
+def DPLL.step {n : Nat} (_Φ : CNF n) (s : DPLLState n) : DPLLState n :=
+  s
+
+/-- DPLL 停机条件。 -/
+def DPLL.halting {n : Nat} (_Φ : CNF n) (s : DPLLState n) : Prop :=
+  DPLLState.isTerminal s
+
+/-- 把 DPLL 包装成 AlgorithmModel。 -/
+def DPLLModel (n : Nat) : AlgorithmModel n :=
+{ StateType := DPLLState n
+, init     := fun Φ => DPLL.initState Φ
+, step     := fun Φ s => DPLL.step Φ s
+, halting  := fun Φ s => DPLL.halting Φ s }
+
+
+/-! ### 9. CDCL 状态与模型 -/
+
+/-- CDCL 状态骨架 -/
+structure CDCLState (n : Nat) where
+  assign      : Assignment n
+  trail       : List (Fin n × Bool)
+  decisionLvl : Nat
+  formula     : CNF n
+  learnt      : List (Clause n)
+  conflicts   : Nat
+  unsat       : Bool
+
+/-- CDCL 状态能量 -/
+def CDCLState.energy {n : Nat} (s : CDCLState n) : Nat :=
+  StructuralAction.energy s.formula s.assign
+
+/-- 当前赋值满足原公式？ -/
+def CDCLState.isSatisfied {n : Nat} (s : CDCLState n) : Prop :=
+  cnfEval s.assign s.formula = true
+
+/-- 当前赋值语义冲突？ -/
+def CDCLState.hasConflict {n : Nat} (s : CDCLState n) : Prop :=
+  cnfEval s.assign s.formula = false
+
+/-- SAT 停机：满足且未标记 unsat。 -/
+def CDCLState.isSatTerminal {n : Nat} (s : CDCLState n) : Prop :=
+  s.isSatisfied ∧ ¬ s.unsat
+
+/-- UNSAT 停机：全局 unsat 标志为真。 -/
+def CDCLState.isUnsatTerminal {n : Nat} (s : CDCLState n) : Prop :=
+  s.unsat
+
+/-- CDCL 停机条件：SAT 或 UNSAT。 -/
+def CDCLState.isTerminal {n : Nat} (s : CDCLState n) : Prop :=
+  s.isSatTerminal ∨ s.isUnsatTerminal
+
+/-- CDCL 初始状态骨架。 -/
+def CDCL.initState {n : Nat} (Φ : CNF n) : CDCLState n :=
+  { assign      := fun _ => false
+  , trail       := []
+  , decisionLvl := 0
+  , formula     := Φ
+  , learnt      := []
+  , conflicts   := 0
+  , unsat       := false }
+
+/-- CDCL 单步转移（目前占位实现：恒等）。 -/
+def CDCL.step {n : Nat} (_Φ : CNF n) (s : CDCLState n) : CDCLState n :=
+  s
+
+/-- CDCL 停机条件。 -/
+def CDCL.halting {n : Nat} (_Φ : CNF n) (s : CDCLState n) : Prop :=
+  CDCLState.isTerminal s
+
+/-- 把 CDCL 包装成 AlgorithmModel。 -/
+def CDCLModel (n : Nat) : AlgorithmModel n :=
+{ StateType := CDCLState n
+, init     := fun Φ => CDCL.initState Φ
+, step     := fun Φ s => CDCL.step Φ s
+, halting  := fun Φ s => CDCL.halting Φ s }
+
+
+/-! ### 10. 给 DPLL / CDCL 一个“能量型”结构密度示例 -/
+
+noncomputable
+def cdclStructuralDensity {n : Nat} :
+    (CDCLModel n).StateType → Real :=
+  fun s => (CDCLState.energy s : Real)
+
+noncomputable
+def dpllStructuralDensity {n : Nat} :
+    (DPLLModel n).StateType → Real :=
+  fun s => (DPLLState.energy s : Real)
+
+
+/-! ### 11. 针对 DPLL / CDCL 的专用结构作用量 -/
+
+noncomputable
+def dpllAction {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (DPLLModel n) Φ) : Real :=
+  ∑ t : Fin (ψ.T + 1), dpllStructuralDensity (ψ.states t)
+
+lemma dpllAction_nonneg {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (DPLLModel n) Φ) :
+    0 ≤ dpllAction Φ ψ := by
+  unfold dpllAction
+  have hterm_nonneg :
+      ∀ t : Fin (ψ.T + 1),
+        0 ≤ dpllStructuralDensity (ψ.states t) := by
+    intro t
+    unfold dpllStructuralDensity
+    simp
+  exact Finset.sum_nonneg (by
+    intro t _
+    exact hterm_nonneg t)
+
+noncomputable
+def cdclAction {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (CDCLModel n) Φ) : Real :=
+  ∑ t : Fin (ψ.T + 1), cdclStructuralDensity (ψ.states t)
+
+lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (CDCLModel n) Φ) :
+    0 ≤ cdclAction Φ ψ := by
+  unfold cdclAction
+  have hterm_nonneg :
+      ∀ t : Fin (ψ.T + 1),
+        0 ≤ cdclStructuralDensity (ψ.states t) := by
+    intro t
+    unfold cdclStructuralDensity
+    simp
+  exact Finset.sum_nonneg (by
+    intro t _
+    exact hterm_nonneg t)
+
+
+/-! ### 12. 把“满足”与“能量为 0”在状态层面连起来 -/
+
+lemma DPLLState.isSatisfied_iff_energy_zero {n : Nat} (s : DPLLState n) :
+    DPLLState.isSatisfied s ↔ DPLLState.energy s = 0 := by
+  have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
+  -- linter 可能建议用 simp，但 simpa 在这里也是合法的
+  simpa [DPLLState.isSatisfied, DPLLState.energy, satSet] using h
+
+lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
+    CDCLState.isSatisfied s ↔ CDCLState.energy s = 0 := by
+  have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
+  simpa [CDCLState.isSatisfied, CDCLState.energy, satSet] using h
+
+
+/-! ### 13. 方便记号：DPLLPath / CDCLPath -/
+
+abbrev DPLLPath (n : Nat) (Φ : CNF n) :=
+  ComputationPath (DPLLModel n) Φ
+
+abbrev CDCLPath (n : Nat) (Φ : CNF n) :=
+  ComputationPath (CDCLModel n) Φ
+
+
+/-! ### 14. 一个 n = 1 的玩具 3-SAT 例子 -/
+
+def exampleClause1 : Clause 1 :=
+  fun _ => { var := ⟨0, by decide⟩, neg := false }
+
+def exampleCNF1 : CNF 1 :=
+  [exampleClause1]
+
+def exampleDPLLInit : DPLLState 1 :=
+  DPLL.initState exampleCNF1
+
+def exampleDPLLNext : DPLLState 1 :=
+  DPLL.step exampleCNF1 exampleDPLLInit
+
+def exampleCDCLInit : CDCLState 1 :=
+  CDCL.initState exampleCNF1
+
+def exampleCDCLNext : CDCLState 1 :=
+  CDCL.step exampleCNF1 exampleCDCLInit
+
+
+/-! ## 15. 附录级 schema：hardFamily + 主定理骨架 -/
+
+-- 抽象 hard 3-SAT 公式族：每个 n 给一个 `CNF n`。
+axiom hardFamily : ∀ n : Nat, CNF n
+
+-- 抽象“算法族”：每个输入规模 n 有一个 `AlgorithmModel n`。
+structure AlgorithmFamily where
+  model : ∀ n : Nat, AlgorithmModel n
+
+-- DPLL 作为一个“对所有 n 的算法族”。
+def DPLLFamily : AlgorithmFamily where
+  model n := DPLLModel n
+
+-- CDCL 作为一个“对所有 n 的算法族”。
+def CDCLFamily : AlgorithmFamily where
+  model n := CDCLModel n
+
+-- A 在公式族 F 上“正确求解 3-SAT”的抽象谓词（schema 级）。
+axiom SolvesFamily :
+  (∀ n : Nat, CNF n) → AlgorithmFamily → Prop
+
+-- A 是多项式时间算法族的抽象谓词（schema 级）。
+axiom PolyTimeOnFamily :
+  AlgorithmFamily → Prop
+
+-- `HardEnergyLandscape3SAT F`：F 的能量景观满足“hard 3-SAT 能量景观假设”。
+axiom HardEnergyLandscape3SAT :
+  (∀ n : Nat, CNF n) → Prop
+
+-- 主 schema 定理（抽象版）
+theorem no_polytime_solver_from_hard_landscape
+  (F : ∀ n : Nat, CNF n)
+  (hLand : HardEnergyLandscape3SAT F)
+  (A : AlgorithmFamily)
+  (hSolve : SolvesFamily F A)
+  (hPoly  : PolyTimeOnFamily A) :
+  False := by
+  -- TODO：未来这里用你的主技术路线填充。
+  sorry
+
+-- DPLL 专用 corollary（schema）
+theorem no_polytime_DPLL_on_hardFamily
+  (hLand : HardEnergyLandscape3SAT hardFamily)
+  (hSolve : SolvesFamily hardFamily DPLLFamily)
+  (hPoly  : PolyTimeOnFamily DPLLFamily) :
+  False := by
+  have h :=
+    no_polytime_solver_from_hard_landscape
+      (F := hardFamily) (A := DPLLFamily)
+      hLand hSolve hPoly
+  exact h
+
+-- CDCL 专用 corollary（schema）
+theorem no_polytime_CDCL_on_hardFamily
+  (hLand : HardEnergyLandscape3SAT hardFamily)
+  (hSolve : SolvesFamily hardFamily CDCLFamily)
+  (hPoly  : PolyTimeOnFamily CDCLFamily) :
+  False := by
+  have h :=
+    no_polytime_solver_from_hard_landscape
+      (F := hardFamily) (A := CDCLFamily)
+      hLand hSolve hPoly
+  exact h
+namespace StructuralAction
+
+/-! ### Toy 区域：对 exampleCNF1 做一个完全可证的能量–满足等价性 -/
+
+/-- 辅助：布尔 `b` 满足 `b = true` 当且仅当 `if b then 0 else 1 = 0`。 -/
+lemma bool_eq_true_iff_if (b : Bool) :
+    (b = true) ↔ (if b then 0 else 1 : Nat) = 0 := by
+  -- 只需要区分 b = true / false 两种情况
+  cases hb : b
+  · -- 情况 b = false
+    -- 左边：(false = true) 是 False；右边：(if false then 0 else 1) = 0 即 1 = 0，也是 False
+    simp [hb]
+  · -- 情况 b = true
+    -- 左边：(true = true)；右边：(if true then 0 else 1) = 0 即 0 = 0
+    simp [hb]
+
+/-- 对 toy 公式 `exampleCNF1`：`cnfEval` 其实就是唯一子句的值。 -/
+lemma cnfEval_exampleCNF1 (σ : Assignment 1) :
+    cnfEval σ exampleCNF1 = clauseEval σ exampleClause1 := by
+  -- 展开定义：只有一个子句，所以 foldr 得到 `clauseEval σ exampleClause1 && true`
+  unfold cnfEval exampleCNF1
+  simp
+
+/-- 对 toy 公式 `exampleCNF1`：能量就是“唯一子句是否被满足”的 if。 -/
+lemma energy_exampleCNF1 (σ : Assignment 1) :
+    energy exampleCNF1 σ
+      = (if clauseEval σ exampleClause1 then 0 else 1) := by
+  -- 展开 energy，对单元素列表做 foldr
+  unfold energy exampleCNF1
+  simp
+
+/-- 玩具版：对 `exampleCNF1` 真正证明 “满足 ↔ 能量为 0”。 -/
+lemma sat_iff_energy_zero_exampleCNF1 (σ : Assignment 1) :
+    σ ∈ satSet exampleCNF1 ↔ energy exampleCNF1 σ = 0 := by
+  -- 展开 satSet：左边就是 `cnfEval σ exampleCNF1 = true`
+  unfold satSet
+  -- 把 cnfEval 和 energy 都改写成同一个布尔变量 b
+  have h_cnf : cnfEval σ exampleCNF1 = clauseEval σ exampleClause1 :=
+    cnfEval_exampleCNF1 σ
+  have h_energy :
+      energy exampleCNF1 σ
+        = (if clauseEval σ exampleClause1 then 0 else 1) :=
+    energy_exampleCNF1 σ
+  -- 设 b = clauseEval σ exampleClause1，简化后统一用 b 来说话
+  set b : Bool := clauseEval σ exampleClause1 with hb_def
+  have h_cnf' : cnfEval σ exampleCNF1 = b := by
+    simpa [hb_def] using h_cnf
+  have h_energy' :
+      energy exampleCNF1 σ = (if b then 0 else 1) := by
+    simpa [hb_def] using h_energy
+
+  constructor
+  · intro hSat
+    -- hSat : cnfEval σ exampleCNF1 = true
+    -- 先从左边得到 b = true
+    have hb_true : b = true := by
+      simpa [h_cnf'] using hSat
+    -- 再用 bool_eq_true_iff_if 把它变成 if = 0
+    have h_if : (if b then 0 else 1 : Nat) = 0 :=
+      (bool_eq_true_iff_if b).mp hb_true
+    -- 最后用 h_energy' 把 if 还原成 energy
+    simpa [h_energy'] using h_if
+
+  · intro hE0
+    -- hE0 : energy exampleCNF1 σ = 0
+    -- 先用 h_energy' 改写成 if = 0
+    have h_if : (if b then 0 else 1 : Nat) = 0 := by
+      simpa [h_energy'] using hE0
+    -- 用 bool_eq_true_iff_if 反过来得到 b = true
+    have hb_true : b = true :=
+      (bool_eq_true_iff_if b).mpr h_if
+    -- 再用 h_cnf' 把 b = true 还原成 cnfEval = true
+    simpa [h_cnf'] using hb_true
+
+end StructuralAction
+namespace StructuralAction
+
+open scoped BigOperators
+
+/-! ### Toy：能量 ≥ 1 ⇒ 作用量 ≥ 时间步数 (DPLL / CDCL) -/
+
+/-- 如果在一条 DPLL 轨迹上，每一步的能量都 ≥ 1，
+    那么用能量作为结构密度的 dpllAction 至少是 `T + 1`。 -/
+lemma dpllAction_lower_bound_of_energy_ge_one
+  {n : Nat} (Φ : CNF n)
+  (ψ : DPLLPath n Φ)
+  (hE : ∀ t : Fin (ψ.T + 1), DPLLState.energy (ψ.states t) ≥ 1) :
+  (ψ.T + 1 : Real) ≤ dpllAction Φ ψ := by
+  classical
+  unfold dpllAction
+  -- 每个时间步：1 ≤ λ_DPLL(s_t)
+  have hterm :
+      ∀ t : Fin (ψ.T + 1), (1 : Real) ≤ dpllStructuralDensity (ψ.states t) := by
+    intro t
+    unfold dpllStructuralDensity
+    -- hE t : energy ≥ 1（Nat 上的大小），转成 Real 上的不等式
+    have hNat := hE t
+    exact_mod_cast hNat
+  -- 对所有 t 求和：∑ 1 ≤ ∑ λ
+  have hsum :
+      ∑ t : Fin (ψ.T + 1), (1 : Real)
+        ≤ ∑ t : Fin (ψ.T + 1), dpllStructuralDensity (ψ.states t) :=
+    Finset.sum_le_sum (fun t _ => hterm t)
+  -- 左边的和就是 (T+1) * 1 = T+1
+  -- `simp` 会自动把 `∑ _ : Fin (ψ.T+1), (1:ℝ)` 化成 `(ψ.T+1 : ℝ)`
+  simpa using hsum
+
+/-- CDCL 版本：如果在一条 CDCL 轨迹上，每一步能量都 ≥ 1，
+    那么用能量作为结构密度的 cdclAction 至少是 `T + 1`。 -/
+lemma cdclAction_lower_bound_of_energy_ge_one
+  {n : Nat} (Φ : CNF n)
+  (ψ : CDCLPath n Φ)
+  (hE : ∀ t : Fin (ψ.T + 1), CDCLState.energy (ψ.states t) ≥ 1) :
+  (ψ.T + 1 : Real) ≤ cdclAction Φ ψ := by
+  classical
+  unfold cdclAction
+  have hterm :
+      ∀ t : Fin (ψ.T + 1), (1 : Real) ≤ cdclStructuralDensity (ψ.states t) := by
+    intro t
+    unfold cdclStructuralDensity
+    have hNat := hE t
+    exact_mod_cast hNat
+  have hsum :
+      ∑ t : Fin (ψ.T + 1), (1 : Real)
+        ≤ ∑ t : Fin (ψ.T + 1), cdclStructuralDensity (ψ.states t) :=
+    Finset.sum_le_sum (fun t _ => hterm t)
+  simpa using hsum
+
+end StructuralAction
+namespace StructuralAction
+
+/-! #############################################################
+### 15. Family 级别：hard 3-SAT 能量景观假设 与 主 schema 定理
+############################################################# -/
+
+/-- 一个“算法族”：对每个规模 `n` 给出一个 `AlgorithmModel n`。 -/
+structure AlgorithmFamily where
+  model : ∀ n : Nat, AlgorithmModel n
+
+/-- 把 DPLL 打包成一个算法族（每个 n 对应 DPLLModel n）。 -/
+def DPLLFamily : AlgorithmFamily where
+  model n := DPLLModel n
+
+/-- 把 CDCL 打包成一个算法族（每个 n 对应 CDCLModel n）。 -/
+def CDCLFamily : AlgorithmFamily where
+  model n := CDCLModel n
+
+
+/-! #### 15.1 语义层面的公理：hard family + “解族” + “多项式时间” -/
+
+/-- 抽象的 hard 3-SAT 能量景观假设：
+    给定一个公式族 `F : ∀ n, CNF n`，这是一个命题。 -/
+axiom HardEnergyLandscape3SAT :
+  (∀ n : Nat, CNF n) → Prop
+
+/-- `SolvesFamily F A`：算法族 `A` 在公式族 `F` 上总是给出正确答案。 -/
+axiom SolvesFamily :
+  (∀ n : Nat, CNF n) → AlgorithmFamily → Prop
+
+/-- `PolyTimeOnFamily F A`：算法族 `A` 在公式族 `F` 上是多项式时间。 -/
+axiom PolyTimeOnFamily :
+  (∀ n : Nat, CNF n) → AlgorithmFamily → Prop
+
+
+/-! #### 15.2 主 schema 定理：hard landscape + action-bound ⇒ 无多项式时间求解族 -/
+
+/--
+主 schema 定理（Lean 签名版）：
+
+若一个 3-SAT 公式族 `F` 满足 hard 能量景观假设，
+并且存在算法族 `A` 既能正确解 `F` 又在 `F` 上多项式时间，
+则与结构作用量的 lower-bound/upper-bound 原理矛盾。
+-/
+theorem no_polytime_solver_from_hard_landscape
+  (F : ∀ n : Nat, CNF n)
+  (A : AlgorithmFamily)
+  (hLand : HardEnergyLandscape3SAT F)
+  (hSolve : SolvesFamily F A)
+  (hPoly  : PolyTimeOnFamily F A) :
+  False := by
+  -- 这里将来要用：
+  -- 1. HardEnergyLandscape3SAT F 给出的指数级 action 下界
+  -- 2. action_bounds_time 给出的 action vs time 上界
+  -- 3. PolyTimeOnFamily F A 给出的时间上界
+  -- 合起来推出矛盾。
+  sorry
+
+
+/-! #### 15.3 DPLL / CDCL 在 hard family 上的专用版本 -/
+
+/-- 一个抽象的 hard 3-SAT 公式族（在论文里就是你选定的 `hardFamily`）。 -/
+variable (hardFamily : ∀ n : Nat, CNF n)
+
+/-- 若 `hardFamily` 满足 hard landscape 假设，
+    且 DPLLFamily 同时是正确的并且多项式时间，
+    则与主 schema 定理矛盾。 -/
+theorem no_polytime_DPLL_on_hardFamily
+  (hLand : HardEnergyLandscape3SAT hardFamily)
+  (hSolve : SolvesFamily hardFamily DPLLFamily)
+  (hPoly  : PolyTimeOnFamily hardFamily DPLLFamily) :
+  False := by
+  -- 直接调用主 schema 定理的特例
+  exact no_polytime_solver_from_hard_landscape hardFamily DPLLFamily hLand hSolve hPoly
+
+/-- 同样的结论：CDCLFamily 在 hardFamily 上也不可能既正确又多项式时间。 -/
+theorem no_polytime_CDCL_on_hardFamily
+  (hLand : HardEnergyLandscape3SAT hardFamily)
+  (hSolve : SolvesFamily hardFamily CDCLFamily)
+  (hPoly  : PolyTimeOnFamily hardFamily CDCLFamily) :
+  False := by
+  exact no_polytime_solver_from_hard_landscape hardFamily CDCLFamily hLand hSolve hPoly
+
+end StructuralAction
+
+end StructuralAction
