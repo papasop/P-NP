@@ -51,7 +51,7 @@ def energy {n : Nat} (Φ : CNF n) (σ : Assignment n) : Nat :=
       acc + (if ok then 0 else 1))
     0
 
-/-- 这里暂时用 axiom：满足 <-> 能量为 0。  
+/-- 这里暂时用 axiom：满足 ↔ 能量为 0。  
     将来你可以用真正的归纳证明替掉。 -/
 axiom sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   σ ∈ satSet Φ ↔ energy Φ σ = 0
@@ -83,7 +83,8 @@ def ConfigGraph (n : Nat) : SimpleGraph (Assignment n) where
     have hEmpty :
       (Finset.univ.filter fun i : Fin n => σ i ≠ σ i)
       = (∅ : Finset (Fin n)) := by
-      apply Finset.eq_empty_iff_forall_not_mem.mpr
+      -- 这里用新的名字 eq_empty_iff_forall_notMem
+      apply Finset.eq_empty_iff_forall_notMem.mpr
       intro i hi
       simp at hi
     have hCard :
@@ -111,8 +112,9 @@ structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
     states ⟨0, Nat.succ_pos _⟩ = A.init Φ
   h_step :
     ∀ t : Fin T,
+      -- t : Fin T，需要先嵌入 Fin (T+1)
       states ⟨t.1.succ, Nat.succ_lt_succ t.2⟩
-        = A.step Φ (states t)
+        = A.step Φ (states ⟨t.1, Nat.lt_trans t.2 (Nat.lt_succ_self _)⟩)
   h_halt :
     A.halting Φ (states ⟨T, Nat.lt_succ_self _⟩)
 
@@ -184,7 +186,7 @@ structure DPLLState (n : Nat) where
 
 /-- DPLL 状态的能量 -/
 def DPLLState.energy {n : Nat} (s : DPLLState n) : Nat :=
-  energy s.formula s.assign
+  StructuralAction.energy s.formula s.assign
 
 /-- 当前赋值满足公式？ -/
 def DPLLState.isSatisfied {n : Nat} (s : DPLLState n) : Prop :=
@@ -210,7 +212,7 @@ def DPLL.initState {n : Nat} (Φ : CNF n) : DPLLState n :=
   , formula   := Φ
   , conflict  := false }
 
-/-- DPLL 单步转移（占位实现） -/
+/-- DPLL 单步转移（目前占位实现：恒等） -/
 def DPLL.step {n : Nat} (_Φ : CNF n) (s : DPLLState n) : DPLLState n :=
   s
 
@@ -240,7 +242,7 @@ structure CDCLState (n : Nat) where
 
 /-- CDCL 状态能量 -/
 def CDCLState.energy {n : Nat} (s : CDCLState n) : Nat :=
-  energy s.formula s.assign
+  StructuralAction.energy s.formula s.assign
 
 /-- 当前赋值满足原公式？ -/
 def CDCLState.isSatisfied {n : Nat} (s : CDCLState n) : Prop :=
@@ -272,7 +274,7 @@ def CDCL.initState {n : Nat} (Φ : CNF n) : CDCLState n :=
   , conflicts   := 0
   , unsat       := false }
 
-/-- CDCL 单步转移（占位实现） -/
+/-- CDCL 单步转移（目前占位实现：恒等） -/
 def CDCL.step {n : Nat} (_Φ : CNF n) (s : CDCLState n) : CDCLState n :=
   s
 
@@ -302,57 +304,8 @@ def dpllStructuralDensity {n : Nat} :
     (DPLLModel n).StateType → Real :=
   fun s => (DPLLState.energy s : Real)
 
-end StructuralAction
-namespace StructuralAction
 
-/-! ## 下一步 1：给 DPLL.step 加一些基础引理 -/
-
-/-- DPLL 的一步不会改动 formula（公式本身保持不变）。 -/
-lemma DPLL.step_preserves_formula {n : Nat} (Φ : CNF n) (s : DPLLState n) :
-    (DPLL.step Φ s).formula = s.formula := by
-  -- 展开定义
-  unfold DPLL.step
-  by_cases hterm : DPLLState.isTerminal s
-  · -- 已终止：step = id
-    simp [hterm]
-  · -- 未终止：分情况讨论 nextVar
-    simp [hterm]
-
-/-- DPLL 的一步不会增加 undecided 集合（要么不变，要么删掉一个变量）。 -/
-lemma DPLL.step_undecided_subset {n : Nat} (Φ : CNF n) (s : DPLLState n) :
-    (DPLL.step Φ s).undecided ⊆ s.undecided := by
-  -- 展开 step
-  unfold DPLL.step
-  by_cases hterm : DPLLState.isTerminal s
-  · -- 已终止：undecided 不变
-    intro x hx
-    simpa [hterm] using hx
-  · -- 未终止：看有没有 nextVar
-    simp [hterm] -- 得到 match 结构
-    -- 两种情况：none / some v
-    intro x hx
-    cases hnv : DPLL.nextVar s with
-    | none =>
-        -- nextVar = none：step 只是改 conflict，undecided 不变
-        simp [DPLL.nextVar, hnv] at hx ⊢
-        exact hx
-    | some v =>
-        -- nextVar = some v：undecided 被 erase 掉 v
-        simp [DPLL.nextVar, hnv] at hx ⊢
-        -- hx : x ∈ s.undecided.erase v
-        -- 利用 Finset.mem_erase 拿到 x ∈ s.undecided
-        rcases Finset.mem_erase.mp hx with ⟨hx_ne, hx_mem⟩
-        exact hx_mem
-
-/-! ## 下一步 2：专门给 DPLL 定义结构作用量 dpllAction -/
-
-/--（前面已经定义过）
-    dpllStructuralDensity : DPLL 状态的结构密度，这里用能量作为示例。
-    noncomputable
-    def dpllStructuralDensity {n : Nat} :
-        (DPLLModel n).StateType → Real :=
-      fun s => (DPLLState.energy s : Real)
--/
+/-! ### 11. 针对 DPLL / CDCL 的专用结构作用量 -/
 
 /-- 针对 DPLLModel 的专用结构作用量：
     A_DPLL[ψ] = ∑ λ_DPLL(s_t)，其中 λ_DPLL = 能量型结构密度。 -/
@@ -366,50 +319,15 @@ lemma dpllAction_nonneg {n : Nat} (Φ : CNF n)
     (ψ : ComputationPath (DPLLModel n) Φ) :
     0 ≤ dpllAction Φ ψ := by
   unfold dpllAction
-  -- 每一项都是 Nat 转为 Real，因此非负
   have hterm_nonneg :
       ∀ t : Fin (ψ.T + 1),
         0 ≤ dpllStructuralDensity (ψ.states t) := by
     intro t
-    -- dpllStructuralDensity = energy (Nat) cast 为 Real
     unfold dpllStructuralDensity
     simp
-  -- 用 sum_nonneg
-  exact Finset.sum_nonneg (fun t _ => hterm_nonneg t)
-
-end StructuralAction
-namespace StructuralAction
-
-/-! ## 继续加强 DPLL：基础行为引理 -/
-
-/-- 若状态已终止，则 DPLL.step 是恒等映射。 -/
-lemma DPLL.step_terminal_id {n : Nat} (Φ : CNF n)
-    {s : DPLLState n} (h : DPLLState.isTerminal s) :
-    DPLL.step Φ s = s := by
-  unfold DPLL.step
-  simp [h]
-
-/-- 若未终止且 `nextVar = none`，则一步 DPLL 会把 conflict 设为 `true`。 -/
-lemma DPLL.step_conflict_when_no_nextVar {n : Nat} (Φ : CNF n)
-    (s : DPLLState n)
-    (h_not_term : ¬ DPLLState.isTerminal s)
-    (h_none : DPLL.nextVar s = none) :
-    (DPLL.step Φ s).conflict = true := by
-  unfold DPLL.step
-  simp [h_not_term, h_none]
-
-/-- 若未终止且 `nextVar = some v`，则 v 不再出现在 undecided 里。 -/
-lemma DPLL.step_removes_chosen_var {n : Nat} (Φ : CNF n)
-    (s : DPLLState n)
-    (h_not_term : ¬ DPLLState.isTerminal s)
-    {v : Fin n} (h_some : DPLL.nextVar s = some v) :
-    v ∉ (DPLL.step Φ s).undecided := by
-  unfold DPLL.step
-  simp [h_not_term, h_some]
-
-
-
-/-! ## 给 CDCL 定义专用结构作用量 cdclAction -/
+  exact Finset.sum_nonneg (by
+    intro t _
+    exact hterm_nonneg t)
 
 /-- 针对 CDCLModel 的专用结构作用量：
     A_CDCL[ψ] = ∑ λ_CDCL(s_t)，其中 λ_CDCL = 能量型结构密度。 -/
@@ -428,13 +346,29 @@ lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
         0 ≤ cdclStructuralDensity (ψ.states t) := by
     intro t
     unfold cdclStructuralDensity
-    simp   -- Nat → Real，显然 ≥ 0
+    simp
   exact Finset.sum_nonneg (by
-    intro t ht
+    intro t _
     exact hterm_nonneg t)
-namespace StructuralAction
 
-/-! ## 11. 方便记号：DPLLPath / CDCLPath -/
+
+/-! ### 12. 把“满足”与“能量为 0”在状态层面连起来 -/
+
+/-- 对 DPLL 状态：`isSatisfied` 等价于能量为 0。 -/
+lemma DPLLState.isSatisfied_iff_energy_zero {n : Nat} (s : DPLLState n) :
+    DPLLState.isSatisfied s ↔ DPLLState.energy s = 0 := by
+  have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
+  -- linter 会建议用 simp / simp at，但这里是风格问题，不影响通过
+  simpa [DPLLState.isSatisfied, DPLLState.energy, satSet] using h
+
+/-- 对 CDCL 状态：`isSatisfied` 等价于能量为 0。 -/
+lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
+    CDCLState.isSatisfied s ↔ CDCLState.energy s = 0 := by
+  have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
+  simpa [CDCLState.isSatisfied, CDCLState.energy, satSet] using h
+
+
+/-! ### 13. 方便记号：DPLLPath / CDCLPath -/
 
 /-- DPLL 在公式 Φ 上的一条计算轨迹 -/
 abbrev DPLLPath (n : Nat) (Φ : CNF n) :=
@@ -445,7 +379,7 @@ abbrev CDCLPath (n : Nat) (Φ : CNF n) :=
   ComputationPath (CDCLModel n) Φ
 
 
-/-! ## 12. 一个 n = 1 的玩具 3-SAT 例子 -/
+/-! ### 14. 一个 n = 1 的玩具 3-SAT 例子 -/
 
 /--
 单变量的“正字面”子句：实际上就是 (x₀)。
@@ -476,4 +410,3 @@ def exampleCDCLNext : CDCLState 1 :=
 
 end StructuralAction
 
-end StructuralAction
