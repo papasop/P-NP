@@ -378,3 +378,102 @@ lemma dpllAction_nonneg {n : Nat} (Φ : CNF n)
   exact Finset.sum_nonneg (fun t _ => hterm_nonneg t)
 
 end StructuralAction
+namespace StructuralAction
+
+/-! ## 继续加强 DPLL：基础行为引理 -/
+
+/-- 若状态已终止，则 DPLL.step 是恒等映射。 -/
+lemma DPLL.step_terminal_id {n : Nat} (Φ : CNF n)
+    {s : DPLLState n} (h : DPLLState.isTerminal s) :
+    DPLL.step Φ s = s := by
+  unfold DPLL.step
+  simp [h]
+
+/-- 若未终止且 `nextVar = none`，则一步 DPLL 会把 conflict 设为 `true`。 -/
+lemma DPLL.step_conflict_when_no_nextVar {n : Nat} (Φ : CNF n)
+    (s : DPLLState n)
+    (h_not_term : ¬ DPLLState.isTerminal s)
+    (h_none : DPLL.nextVar s = none) :
+    (DPLL.step Φ s).conflict = true := by
+  unfold DPLL.step
+  simp [h_not_term, h_none]
+
+/-- 若未终止且 `nextVar = some v`，则 v 不再出现在 undecided 里。 -/
+lemma DPLL.step_removes_chosen_var {n : Nat} (Φ : CNF n)
+    (s : DPLLState n)
+    (h_not_term : ¬ DPLLState.isTerminal s)
+    {v : Fin n} (h_some : DPLL.nextVar s = some v) :
+    v ∉ (DPLL.step Φ s).undecided := by
+  unfold DPLL.step
+  simp [h_not_term, h_some]
+
+
+
+/-! ## 给 CDCL 定义专用结构作用量 cdclAction -/
+
+/-- 针对 CDCLModel 的专用结构作用量：
+    A_CDCL[ψ] = ∑ λ_CDCL(s_t)，其中 λ_CDCL = 能量型结构密度。 -/
+noncomputable
+def cdclAction {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (CDCLModel n) Φ) : Real :=
+  ∑ t : Fin (ψ.T + 1), cdclStructuralDensity (ψ.states t)
+
+/-- cdclAction 总是非负（每一步的能量 ≥ 0）。 -/
+lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (CDCLModel n) Φ) :
+    0 ≤ cdclAction Φ ψ := by
+  unfold cdclAction
+  have hterm_nonneg :
+      ∀ t : Fin (ψ.T + 1),
+        0 ≤ cdclStructuralDensity (ψ.states t) := by
+    intro t
+    unfold cdclStructuralDensity
+    simp   -- Nat → Real，显然 ≥ 0
+  exact Finset.sum_nonneg (by
+    intro t ht
+    exact hterm_nonneg t)
+namespace StructuralAction
+
+/-! ## 11. 方便记号：DPLLPath / CDCLPath -/
+
+/-- DPLL 在公式 Φ 上的一条计算轨迹 -/
+abbrev DPLLPath (n : Nat) (Φ : CNF n) :=
+  ComputationPath (DPLLModel n) Φ
+
+/-- CDCL 在公式 Φ 上的一条计算轨迹 -/
+abbrev CDCLPath (n : Nat) (Φ : CNF n) :=
+  ComputationPath (CDCLModel n) Φ
+
+
+/-! ## 12. 一个 n = 1 的玩具 3-SAT 例子 -/
+
+/--
+单变量的“正字面”子句：实际上就是 (x₀)。
+这里由于是 3-SAT 的骨架，我们用 3 个相同的字面填满子句位。
+-/
+def exampleClause1 : Clause 1 :=
+  fun _ => { var := ⟨0, by decide⟩, neg := false }
+
+/-- 只包含一个子句 (x₀) 的 CNF：Φ(x) = (x₀)。 -/
+def exampleCNF1 : CNF 1 :=
+  [exampleClause1]
+
+/-- 对 exampleCNF1 的 DPLL 初始状态 -/
+def exampleDPLLInit : DPLLState 1 :=
+  DPLL.initState exampleCNF1
+
+/-- 在 exampleCNF1 上运行 DPLL 一步后的状态 -/
+def exampleDPLLNext : DPLLState 1 :=
+  DPLL.step exampleCNF1 exampleDPLLInit
+
+/-- 对 exampleCNF1 的 CDCL 初始状态 -/
+def exampleCDCLInit : CDCLState 1 :=
+  CDCL.initState exampleCNF1
+
+/-- 在 exampleCNF1 上运行 CDCL 一步后的状态 -/
+def exampleCDCLNext : CDCLState 1 :=
+  CDCL.step exampleCNF1 exampleCDCLInit
+
+end StructuralAction
+
+end StructuralAction
