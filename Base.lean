@@ -303,3 +303,78 @@ def dpllStructuralDensity {n : Nat} :
   fun s => (DPLLState.energy s : Real)
 
 end StructuralAction
+namespace StructuralAction
+
+/-! ## 下一步 1：给 DPLL.step 加一些基础引理 -/
+
+/-- DPLL 的一步不会改动 formula（公式本身保持不变）。 -/
+lemma DPLL.step_preserves_formula {n : Nat} (Φ : CNF n) (s : DPLLState n) :
+    (DPLL.step Φ s).formula = s.formula := by
+  -- 展开定义
+  unfold DPLL.step
+  by_cases hterm : DPLLState.isTerminal s
+  · -- 已终止：step = id
+    simp [hterm]
+  · -- 未终止：分情况讨论 nextVar
+    simp [hterm]
+
+/-- DPLL 的一步不会增加 undecided 集合（要么不变，要么删掉一个变量）。 -/
+lemma DPLL.step_undecided_subset {n : Nat} (Φ : CNF n) (s : DPLLState n) :
+    (DPLL.step Φ s).undecided ⊆ s.undecided := by
+  -- 展开 step
+  unfold DPLL.step
+  by_cases hterm : DPLLState.isTerminal s
+  · -- 已终止：undecided 不变
+    intro x hx
+    simpa [hterm] using hx
+  · -- 未终止：看有没有 nextVar
+    simp [hterm] -- 得到 match 结构
+    -- 两种情况：none / some v
+    intro x hx
+    cases hnv : DPLL.nextVar s with
+    | none =>
+        -- nextVar = none：step 只是改 conflict，undecided 不变
+        simp [DPLL.nextVar, hnv] at hx ⊢
+        exact hx
+    | some v =>
+        -- nextVar = some v：undecided 被 erase 掉 v
+        simp [DPLL.nextVar, hnv] at hx ⊢
+        -- hx : x ∈ s.undecided.erase v
+        -- 利用 Finset.mem_erase 拿到 x ∈ s.undecided
+        rcases Finset.mem_erase.mp hx with ⟨hx_ne, hx_mem⟩
+        exact hx_mem
+
+/-! ## 下一步 2：专门给 DPLL 定义结构作用量 dpllAction -/
+
+/--（前面已经定义过）
+    dpllStructuralDensity : DPLL 状态的结构密度，这里用能量作为示例。
+    noncomputable
+    def dpllStructuralDensity {n : Nat} :
+        (DPLLModel n).StateType → Real :=
+      fun s => (DPLLState.energy s : Real)
+-/
+
+/-- 针对 DPLLModel 的专用结构作用量：
+    A_DPLL[ψ] = ∑ λ_DPLL(s_t)，其中 λ_DPLL = 能量型结构密度。 -/
+noncomputable
+def dpllAction {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (DPLLModel n) Φ) : Real :=
+  ∑ t : Fin (ψ.T + 1), dpllStructuralDensity (ψ.states t)
+
+/-- dpllAction 总是非负（因为每一步的能量 ≥ 0）。 -/
+lemma dpllAction_nonneg {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (DPLLModel n) Φ) :
+    0 ≤ dpllAction Φ ψ := by
+  unfold dpllAction
+  -- 每一项都是 Nat 转为 Real，因此非负
+  have hterm_nonneg :
+      ∀ t : Fin (ψ.T + 1),
+        0 ≤ dpllStructuralDensity (ψ.states t) := by
+    intro t
+    -- dpllStructuralDensity = energy (Nat) cast 为 Real
+    unfold dpllStructuralDensity
+    simp
+  -- 用 sum_nonneg
+  exact Finset.sum_nonneg (fun t _ => hterm_nonneg t)
+
+end StructuralAction
