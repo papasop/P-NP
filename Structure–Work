@@ -52,7 +52,7 @@ def energy {n : Nat} (Φ : CNF n) (σ : Assignment n) : Nat :=
     0
 
 /-- 目前先作为公理使用：σ 满足当且仅当能量为 0。
-    将来可以用真正的证明替换掉这个 axiom。 -/
+    将来可以用真正的证明替代。 -/
 axiom sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   σ ∈ satSet Φ ↔ energy Φ σ = 0
 
@@ -83,7 +83,7 @@ def ConfigGraph (n : Nat) : SimpleGraph (Assignment n) where
     have hEmpty :
       (Finset.univ.filter fun i : Fin n => σ i ≠ σ i)
       = (∅ : Finset (Fin n)) := by
-      -- 使用新的名字 eq_empty_iff_forall_notMem
+      -- 使用新的 eq_empty_iff_forall_notMem
       apply Finset.eq_empty_iff_forall_notMem.mpr
       intro i hi
       simp at hi
@@ -293,13 +293,11 @@ def CDCLModel (n : Nat) : AlgorithmModel n :=
 
 /-! ### 10. 给 DPLL / CDCL 一个“能量型”结构密度示例 -/
 
-/-- CDCL：结构密度 = 能量（示例版）。 -/
 noncomputable
 def cdclStructuralDensity {n : Nat} :
     (CDCLModel n).StateType → Real :=
   fun s => (CDCLState.energy s : Real)
 
-/-- DPLL：结构密度 = 能量（示例版）。 -/
 noncomputable
 def dpllStructuralDensity {n : Nat} :
     (DPLLModel n).StateType → Real :=
@@ -308,14 +306,11 @@ def dpllStructuralDensity {n : Nat} :
 
 /-! ### 11. 针对 DPLL / CDCL 的专用结构作用量 -/
 
-/-- 针对 DPLLModel 的专用结构作用量：
-    A_DPLL[ψ] = ∑ λ_DPLL(s_t)，其中 λ_DPLL = 能量型结构密度。 -/
 noncomputable
 def dpllAction {n : Nat} (Φ : CNF n)
     (ψ : ComputationPath (DPLLModel n) Φ) : Real :=
   ∑ t : Fin (ψ.T + 1), dpllStructuralDensity (ψ.states t)
 
-/-- dpllAction 总是非负（因为每一步的能量 ≥ 0）。 -/
 lemma dpllAction_nonneg {n : Nat} (Φ : CNF n)
     (ψ : ComputationPath (DPLLModel n) Φ) :
     0 ≤ dpllAction Φ ψ := by
@@ -330,14 +325,11 @@ lemma dpllAction_nonneg {n : Nat} (Φ : CNF n)
     intro t _
     exact hterm_nonneg t)
 
-/-- 针对 CDCLModel 的专用结构作用量：
-    A_CDCL[ψ] = ∑ λ_CDCL(s_t)，其中 λ_CDCL = 能量型结构密度。 -/
 noncomputable
 def cdclAction {n : Nat} (Φ : CNF n)
     (ψ : ComputationPath (CDCLModel n) Φ) : Real :=
   ∑ t : Fin (ψ.T + 1), cdclStructuralDensity (ψ.states t)
 
-/-- cdclAction 总是非负（每一步的能量 ≥ 0）。 -/
 lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
     (ψ : ComputationPath (CDCLModel n) Φ) :
     0 ≤ cdclAction Φ ψ := by
@@ -355,14 +347,12 @@ lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
 
 /-! ### 12. 把“满足”与“能量为 0”在状态层面连起来 -/
 
-/-- 对 DPLL 状态：`isSatisfied` 等价于能量为 0（目前经由 sat_iff_energy_zero 公理）。 -/
 lemma DPLLState.isSatisfied_iff_energy_zero {n : Nat} (s : DPLLState n) :
     DPLLState.isSatisfied s ↔ DPLLState.energy s = 0 := by
   have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  -- linter 可能建议用 `simp`，但 `simpa` 也完全合法
+  -- linter 可能建议用 simp，但 simpa 在这里也是合法的
   simpa [DPLLState.isSatisfied, DPLLState.energy, satSet] using h
 
-/-- 对 CDCL 状态：`isSatisfied` 等价于能量为 0。 -/
 lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
     CDCLState.isSatisfied s ↔ CDCLState.energy s = 0 := by
   have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
@@ -371,43 +361,98 @@ lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
 
 /-! ### 13. 方便记号：DPLLPath / CDCLPath -/
 
-/-- DPLL 在公式 Φ 上的一条计算轨迹 -/
 abbrev DPLLPath (n : Nat) (Φ : CNF n) :=
   ComputationPath (DPLLModel n) Φ
 
-/-- CDCL 在公式 Φ 上的一条计算轨迹 -/
 abbrev CDCLPath (n : Nat) (Φ : CNF n) :=
   ComputationPath (CDCLModel n) Φ
 
 
 /-! ### 14. 一个 n = 1 的玩具 3-SAT 例子 -/
 
-/--
-单变量的“正字面”子句：实际上就是 (x₀)。
-这里由于是 3-SAT 的骨架，我们用 3 个相同的字面填满子句位。
--/
 def exampleClause1 : Clause 1 :=
   fun _ => { var := ⟨0, by decide⟩, neg := false }
 
-/-- 只包含一个子句 (x₀) 的 CNF：Φ(x) = (x₀)。 -/
 def exampleCNF1 : CNF 1 :=
   [exampleClause1]
 
-/-- 对 exampleCNF1 的 DPLL 初始状态 -/
 def exampleDPLLInit : DPLLState 1 :=
   DPLL.initState exampleCNF1
 
-/-- 在 exampleCNF1 上运行 DPLL 一步后的状态 -/
 def exampleDPLLNext : DPLLState 1 :=
   DPLL.step exampleCNF1 exampleDPLLInit
 
-/-- 对 exampleCNF1 的 CDCL 初始状态 -/
 def exampleCDCLInit : CDCLState 1 :=
   CDCL.initState exampleCNF1
 
-/-- 在 exampleCNF1 上运行 CDCL 一步后的状态 -/
 def exampleCDCLNext : CDCLState 1 :=
   CDCL.step exampleCNF1 exampleCDCLInit
 
+
+/-! ## 15. 附录级 schema：hardFamily + 主定理骨架 -/
+
+-- 抽象 hard 3-SAT 公式族：每个 n 给一个 `CNF n`。
+axiom hardFamily : ∀ n : Nat, CNF n
+
+-- 抽象“算法族”：每个输入规模 n 有一个 `AlgorithmModel n`。
+structure AlgorithmFamily where
+  model : ∀ n : Nat, AlgorithmModel n
+
+-- DPLL 作为一个“对所有 n 的算法族”。
+def DPLLFamily : AlgorithmFamily where
+  model n := DPLLModel n
+
+-- CDCL 作为一个“对所有 n 的算法族”。
+def CDCLFamily : AlgorithmFamily where
+  model n := CDCLModel n
+
+-- A 在公式族 F 上“正确求解 3-SAT”的抽象谓词（schema 级）。
+axiom SolvesFamily :
+  (∀ n : Nat, CNF n) → AlgorithmFamily → Prop
+
+-- A 是多项式时间算法族的抽象谓词（schema 级）。
+axiom PolyTimeOnFamily :
+  AlgorithmFamily → Prop
+
+-- `HardEnergyLandscape3SAT F`：F 的能量景观满足“hard 3-SAT 能量景观假设”。
+axiom HardEnergyLandscape3SAT :
+  (∀ n : Nat, CNF n) → Prop
+
+-- 主 schema 定理（抽象版）
+theorem no_polytime_solver_from_hard_landscape
+  (F : ∀ n : Nat, CNF n)
+  (hLand : HardEnergyLandscape3SAT F)
+  (A : AlgorithmFamily)
+  (hSolve : SolvesFamily F A)
+  (hPoly  : PolyTimeOnFamily A) :
+  False := by
+  -- TODO：未来这里用你的主技术路线填充。
+  sorry
+
+-- DPLL 专用 corollary（schema）
+theorem no_polytime_DPLL_on_hardFamily
+  (hLand : HardEnergyLandscape3SAT hardFamily)
+  (hSolve : SolvesFamily hardFamily DPLLFamily)
+  (hPoly  : PolyTimeOnFamily DPLLFamily) :
+  False := by
+  have h :=
+    no_polytime_solver_from_hard_landscape
+      (F := hardFamily) (A := DPLLFamily)
+      hLand hSolve hPoly
+  exact h
+
+-- CDCL 专用 corollary（schema）
+theorem no_polytime_CDCL_on_hardFamily
+  (hLand : HardEnergyLandscape3SAT hardFamily)
+  (hSolve : SolvesFamily hardFamily CDCLFamily)
+  (hPoly  : PolyTimeOnFamily CDCLFamily) :
+  False := by
+  have h :=
+    no_polytime_solver_from_hard_landscape
+      (F := hardFamily) (A := CDCLFamily)
+      hLand hSolve hPoly
+  exact h
+
 end StructuralAction
+
 
