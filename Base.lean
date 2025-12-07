@@ -139,16 +139,11 @@ def time {n : Nat} {A : AlgorithmModel n} {Φ : CNF n}
   ψ.T
 
 
-/-! ### 6. 能量子水平集 & 能量障碍（占位） -/
+/-! ### 6. 能量子水平集（简单版本） -/
 
 /-- 能量 ≤ k 的子水平集 -/
 def sublevel {n : Nat} (Φ : CNF n) (k : Nat) : Set (Assignment n) :=
   { σ | energy Φ σ ≤ k }
-
-/-- 能量障碍（占位版本）：真正版本会用路径 infimum 定义 -/
-def energyBarrier {n : Nat} (_Φ : CNF n)
-    (_S₀ : Set (Assignment n)) : Nat :=
-  0
 
 
 /-! ### 7. 结构作用量与时间的 schema 定理（axiom 占位） -/
@@ -357,15 +352,21 @@ lemma cdclAction_nonneg {n : Nat} (Φ : CNF n)
 /-- 对 DPLL 状态：`isSatisfied` 等价于能量为 0。 -/
 lemma DPLLState.isSatisfied_iff_energy_zero {n : Nat} (s : DPLLState n) :
     DPLLState.isSatisfied s ↔ DPLLState.energy s = 0 := by
+  -- 把目标改写成 cnfEval = true 的形式
+  change cnfEval s.assign s.formula = true ↔ energy s.formula s.assign = 0
+  -- 用全局的 sat_iff_energy_zero
   have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  -- linter 会建议用 simp / simp at，但这里是风格问题，不影响通过
-  simpa [DPLLState.isSatisfied, DPLLState.energy, satSet] using h
+  -- 把 membership 展开成 cnfEval = true
+  simp [satSet] at h
+  exact h
 
 /-- 对 CDCL 状态：`isSatisfied` 等价于能量为 0。 -/
 lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
     CDCLState.isSatisfied s ↔ CDCLState.energy s = 0 := by
+  change cnfEval s.assign s.formula = true ↔ energy s.formula s.assign = 0
   have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  simpa [CDCLState.isSatisfied, CDCLState.energy, satSet] using h
+  simp [satSet] at h
+  exact h
 
 
 /-! ### 13. 方便记号：DPLLPath / CDCLPath -/
@@ -408,5 +409,124 @@ def exampleCDCLInit : CDCLState 1 :=
 def exampleCDCLNext : CDCLState 1 :=
   CDCL.step exampleCNF1 exampleCDCLInit
 
+
+/-! ### 15. 配置图上的路径与能量障碍 -/
+
+/-- 在赋值配置图上的一条有限路径：
+    `len` 表示步数（边数），有 `len+1` 个节点。 -/
+structure ConfigPath (n : Nat) where
+  len   : Nat
+  nodes : Fin (len + 1) → Assignment n
+  h_adj :
+    ∀ t : Fin len,
+      neighbor
+        (nodes ⟨t.1, Nat.lt_trans t.2 (Nat.lt_succ_self _)⟩)
+        (nodes ⟨t.1.succ, Nat.succ_lt_succ t.2⟩)
+
+namespace ConfigPath
+
+/-- 路径起点赋值 -/
+def start {n : Nat} (p : ConfigPath n) : Assignment n :=
+  p.nodes ⟨0, Nat.succ_pos _⟩
+
+/-- 路径终点赋值 -/
+def finish {n : Nat} (p : ConfigPath n) : Assignment n :=
+  p.nodes ⟨p.len, Nat.lt_succ_self _⟩
+
+/-- 起点属于集合 `S` -/
+def startsIn {n : Nat} (p : ConfigPath n) (S : Set (Assignment n)) : Prop :=
+  p.start ∈ S
+
+/-- 终点属于集合 `T` -/
+def endsIn {n : Nat} (p : ConfigPath n) (T : Set (Assignment n)) : Prop :=
+  p.finish ∈ T
+
+/-- 路径上某个时间步的能量 -/
+def energyAt {n : Nat} (Φ : CNF n) (p : ConfigPath n) (t : Fin (p.len + 1)) : Nat :=
+  energy Φ (p.nodes t)
+
+end ConfigPath
+
+/-- 能量障碍：从集合 `S` 到集合 `T` 的所有路径，  
+    都必须在某一步达到至少 `B` 的能量。 -/
+structure EnergyBarrier (n : Nat) (Φ : CNF n)
+    (S T : Set (Assignment n)) where
+  B : Nat
+  barrier_spec :
+    ∀ p : ConfigPath n,
+      p.startsIn S → p.endsIn T →
+        ∃ t : Fin (p.len + 1),
+          ConfigPath.energyAt Φ p t ≥ B
+
+
+/-! ### 16. 算法状态到赋值空间的投影 -/
+
+/-- 一个算法模型到赋值空间的投影接口：
+    给定状态，抽取一个 `Assignment n`。 -/
+class HasStateProj (n : Nat) (A : AlgorithmModel n) where
+  proj : A.StateType → Assignment n
+
+/-- 便捷记号：状态投影到赋值空间。 -/
+def stateProj {n : Nat} {A : AlgorithmModel n} [HasStateProj n A] :
+    A.StateType → Assignment n :=
+  HasStateProj.proj (n := n) (A := A)
+
+/-- 对一条计算轨迹 ψ，抽取它在赋值空间中的轨迹（结构影子）。 -/
+def projTrace {n : Nat} {A : AlgorithmModel n} [HasStateProj n A]
+    {Φ : CNF n} (ψ : ComputationPath A Φ) :
+    Fin (ψ.T + 1) → Assignment n :=
+  fun t => stateProj (ψ.states t)
+
+/-- 轨迹的初始赋值 -/
+def initialAssignment {n : Nat} {A : AlgorithmModel n} [HasStateProj n A]
+    {Φ : CNF n} (ψ : ComputationPath A Φ) : Assignment n :=
+  stateProj (ψ.states ⟨0, Nat.succ_pos _⟩)
+
+/-- 轨迹的终止赋值 -/
+def finalAssignment {n : Nat} {A : AlgorithmModel n} [HasStateProj n A]
+    {Φ : CNF n} (ψ : ComputationPath A Φ) : Assignment n :=
+  stateProj (ψ.states ⟨ψ.T, Nat.lt_succ_self _⟩)
+
+/-- DPLL 的状态投影：直接取 `assign` 字段。 -/
+instance instHasStateProjDPLL (n : Nat) : HasStateProj n (DPLLModel n) where
+  proj := fun s => s.assign
+
+/-- CDCL 的状态投影：直接取 `assign` 字段。 -/
+instance instHasStateProjCDCL (n : Nat) : HasStateProj n (CDCLModel n) where
+  proj := fun s => s.assign
+
+
+/-! ### 17. 结构作用量与能量障碍的“原理”形式（公理化 schema） -/
+
+/-- 公理化的“能量障碍 ⇒ 结构作用量下界”原理（抽象形式）。  
+
+`EnergyBarrier n Φ S₀ (satSet Φ)` 给出：
+  - 从某个“低能区域” `S₀` 出发，
+  - 到达满足集合 `satSet Φ` 的所有路径，
+  - 沿着配置图 `ConfigGraph n` 必须穿越能量至少 `B` 的点。
+
+`HasStateProj` 给出：
+  - 算法状态空间到赋值空间的投影，
+  - 使得计算轨迹 ψ 在赋值空间中可以看作一条路径。
+
+`action_lower_bound_from_barrier` 则封装你希望建立的核心原则：
+  > “如果任意求解轨迹必须穿越能量障碍 B，
+  >  并且结构密度与能量有单调关系，
+  >  那么任何求解轨迹的结构作用量 A[ψ] 至少为 c * B。”
+-/
+axiom action_lower_bound_from_barrier
+  {n : Nat} {A : AlgorithmModel n} [HasStateProj n A]
+  (Φ : CNF n) (S₀ : Set (Assignment n))
+  (bar : EnergyBarrier n Φ S₀ (satSet Φ)) :
+  ∃ c : Real, c > 0 ∧
+    ∀ (ψ : ComputationPath A Φ),
+      -- 初始赋值在低能区域 S₀
+      initialAssignment (A := A) (Φ := Φ) ψ ∈ S₀ →
+      -- 终止赋值是一个满足解
+      finalAssignment (A := A) (Φ := Φ) ψ ∈ satSet Φ →
+      -- 结构作用量 A[ψ] 至少为 c · B
+      action (A := A) (Φ := Φ) ψ ≥ c * (bar.B : Real)
+
 end StructuralAction
+
 
