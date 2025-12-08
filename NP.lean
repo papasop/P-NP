@@ -518,5 +518,78 @@ theorem toy_hardFamily_contradiction
   have h_absurd : (2 : ℕ)^10 < (2 : ℕ)^10 :=
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
+/-! ------------------------------------------------------------
+### 15. 一般版：多项式上界 vs 2^n 指数下界的矛盾 Schema
+------------------------------------------------------------ -/
+
+namespace GeneralGrowth
+
+open StructuralAction
+
+/-- 一般的多项式上界：给定任意 `P : ℕ → ℕ`，`A` 被 `P` 上界。 -/
+def PolyUpper (A P : ℕ → ℕ) : Prop :=
+  ∀ n : ℕ, A n ≤ P n
+
+/-- 一般版 Schema：
+
+如果存在某个具体的 `n₀` 使得
+
+* `ExpLower_2pow A`：对所有 n 有 `2^n ≤ A n`
+* `PolyUpper A P`：对所有 n 有 `A n ≤ P n`
+* 但 `P n₀ < 2^n₀`
+
+那么矛盾。
+
+这个定理是完全无公理、纯算术的。 -/
+theorem expLower_polyUpper_contradiction_withWitness
+    {A P : ℕ → ℕ}
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper A P)
+    (hWitness : ∃ n₀ : ℕ, P n₀ < (2 : ℕ)^n₀) :
+    False := by
+  -- 取出见证 n₀
+  rcases hWitness with ⟨n₀, hP_lt⟩
+  -- 从指数下界和多项式上界得到 2^n₀ ≤ P n₀
+  have h1 : (2 : ℕ)^n₀ ≤ A n₀ := hLower n₀
+  have h2 : A n₀ ≤ P n₀ := hUpper n₀
+  have h_le : (2 : ℕ)^n₀ ≤ P n₀ := le_trans h1 h2
+  -- 又有 P n₀ < 2^n₀
+  have h_lt : P n₀ < (2 : ℕ)^n₀ := hP_lt
+  -- 合并得到 2^n₀ < 2^n₀
+  have h_absurd : (2 : ℕ)^n₀ < (2 : ℕ)^n₀ :=
+    lt_of_le_of_lt h_le h_lt
+  exact lt_irrefl _ h_absurd
+
+
+/-- **核心增长性公理（占位）**：
+
+对于任意 `P : ℕ → ℕ`（你将来想把它限定成“多项式”），
+都存在一个 n₀ 使得 `P n₀ < 2^n₀`。
+
+这一条在标准数学中是事实（“指数最终支配任何多项式”），
+目前在 Lean 里我们先把它作为单独的公理，以后可以用实分析替换。 -/
+axiom poly_vs_exp_witness (P : ℕ → ℕ) :
+  ∃ n₀ : ℕ, P n₀ < (2 : ℕ)^n₀
+
+/-- 利用 `poly_vs_exp_witness`，给出一个**完全一般的**矛盾定理：
+
+只要某个序列 `A` 同时满足
+
+* `ExpLower_2pow A`（指数下界）
+* `PolyUpper A P`（被某个 P 上界）
+
+就能推出 False。 -/
+theorem expLower_incompatible_with_polyUpper
+    {A P : ℕ → ℕ}
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper A P) :
+    False := by
+  -- 从公理拿到一个 n₀，使得 P n₀ < 2^n₀
+  have hW : ∃ n₀, P n₀ < (2 : ℕ)^n₀ := poly_vs_exp_witness P
+  -- 套用上面那个带 witness 的纯算术定理
+  exact expLower_polyUpper_contradiction_withWitness hLower hUpper hW
+
+end GeneralGrowth
 
 end StructuralAction
+
