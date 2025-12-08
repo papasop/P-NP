@@ -560,6 +560,72 @@ theorem HardAction_polyUpper_impossible :
 
 end ExplicitHardSeq
 
+
+/-! ------------------------------------------------------------
+### 16. DPLL / CDCL 指数下界（玩具版接口）
+这里把 “Hard family 上的 DPLL/CDCL 作用量序列”
+在玩具层面上等同于 HardAction，用来表示：
+
+> hardActionDPLL n ≥ 2^n, hardActionCDCL n ≥ 2^n
+
+真正的数学内容是：  
+在那族 Hard 3-SAT 公式 Φₙ 上，任意 DPLL/CDCL 轨迹 ψₙ 的结构作用量
+是指数级的；在 Lean 里我们先把这一步压缩成一个“同一序列”的接口。
+------------------------------------------------------------ -/
+
+section DPLL_CDCL_ExpLower
+
+/-- 抽象地表示 “Hard family 上 DPLL 的作用量序列”。  
+    在本玩具版本中，我们直接把它定义为 HardAction。 -/
+def hardActionDPLL : ActionSeq :=
+  HardAction
+
+/-- 抽象地表示 “Hard family 上 CDCL 的作用量序列”。  
+    在本玩具版本中，同样直接定义为 HardAction。 -/
+def hardActionCDCL : ActionSeq :=
+  HardAction
+
+/-- DPLL 版本的指数下界：hardActionDPLL n ≥ 2^n。 -/
+lemma hardActionDPLL_expLower_2pow :
+  ExpLower_2pow hardActionDPLL := by
+  -- 直接复用 HardAction_expLower_2pow
+  intro n
+  dsimp [hardActionDPLL, HardAction]
+  exact le_rfl
+
+/-- CDCL 版本的指数下界：hardActionCDCL n ≥ 2^n。 -/
+lemma hardActionCDCL_expLower_2pow :
+  ExpLower_2pow hardActionCDCL := by
+  intro n
+  dsimp [hardActionCDCL, HardAction]
+  exact le_rfl
+
+/-- DPLL：Hard family 上不存在 n^2 的多项式上界（玩具版本）。 -/
+theorem hardActionDPLL_polyUpper_impossible :
+  ¬ PolyUpper_n2 hardActionDPLL := by
+  intro hUpper
+  -- 把假设转移到 HardAction 上
+  have hUpper' : PolyUpper_n2 HardAction := by
+    intro n
+    -- hUpper : ∀ n, hardActionDPLL n ≤ n^2
+    specialize hUpper n
+    simpa [hardActionDPLL, HardAction] using hUpper
+  -- 与前面已经证明的 HardAction_polyUpper_impossible 矛盾
+  exact HardAction_polyUpper_impossible hUpper'
+
+/-- CDCL：Hard family 上不存在 n^2 的多项式上界（玩具版本）。 -/
+theorem hardActionCDCL_polyUpper_impossible :
+  ¬ PolyUpper_n2 hardActionCDCL := by
+  intro hUpper
+  have hUpper' : PolyUpper_n2 HardAction := by
+    intro n
+    specialize hUpper n
+    simpa [hardActionCDCL, HardAction] using hUpper
+  exact HardAction_polyUpper_impossible hUpper'
+
+end DPLL_CDCL_ExpLower
+
 end StructuralAction
+
 
 
