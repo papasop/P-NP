@@ -52,8 +52,8 @@ def energy {n : Nat} (Φ : CNF n) (σ : Assignment n) : Nat :=
       acc + (if ok then 0 else 1))
     0
 
-/-- 这里暂时用 axiom：满足 ↔ 能量为 0。  
-    将来你可以用真正的归纳证明替掉。 -/
+/-- 暂时用 axiom：满足 ↔ 能量为 0。  
+    将来可以用真正的归纳证明替掉。 -/
 axiom sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   σ ∈ satSet Φ ↔ energy Φ σ = 0
 
@@ -82,7 +82,6 @@ def ConfigGraph (n : Nat) : SimpleGraph (Assignment n) where
     classical
     intro σ h
     dsimp [neighbor] at h
-    -- σ 与自身比较时，所有坐标都相等，所以过滤出来的集合的基数是 0
     have h0 :
       (Finset.univ.filter fun i : Fin n => σ i ≠ σ i).card = 0 := by
       simp
@@ -275,20 +274,6 @@ noncomputable
 def cdclStructuralDensity {n : Nat} (s : CDCLState n) : Nat :=
   s.energy
 
-/-- 针对 DPLLModel 的专用结构作用量（Nat）：  
-    A_DPLL[ψ] = ∑ λ_DPLL(s_t)，其中 λ_DPLL = 能量型结构密度。 -/
-noncomputable
-def dpllAction {n : Nat} (Φ : CNF n)
-    (ψ : ComputationPath (DPLLModel n) Φ) : Nat :=
-  ∑ t : Fin (ψ.T + 1), dpllStructuralDensity (ψ.states t)
-
-/-- 针对 CDCLModel 的专用结构作用量（Nat）：  
-    A_CDCL[ψ] = ∑ λ_CDCL(s_t)，其中 λ_CDCL = 能量型结构密度。 -/
-noncomputable
-def cdclAction {n : Nat} (Φ : CNF n)
-    (ψ : ComputationPath (CDCLModel n) Φ) : Nat :=
-  ∑ t : Fin (ψ.T + 1), cdclStructuralDensity (ψ.states t)
-
 
 /-! ### 10. 把“满足”与“能量为 0”在状态层面连起来 -/
 
@@ -344,7 +329,156 @@ def exampleCDCLNext : CDCLState 1 :=
 
 
 /-! ------------------------------------------------------------
-### 13. 玩具版 “指数下界 + 多项式上界 ⇒ 矛盾” 定理 （完全无公理版）
+### 13. 抽象离散作用量上界（Nat 版本）
+------------------------------------------------------------ -/
+
+section NatActionUpper
+
+open Finset
+
+/-- 离散结构作用量（自然数版本）：
+    给定一个“密度”函数 `density : A.StateType → ℕ`，
+    对一条路径 ψ 求和：A_nat[ψ] = ∑_{t=0}^T density(s_t)。 -/
+def pathActionNat
+    {n : ℕ} (A : AlgorithmModel n) (Φ : CNF n)
+    (density : A.StateType → ℕ)
+    (ψ : ComputationPath A Φ) : ℕ :=
+  (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+    (fun t => density (ψ.states t))
+
+/-- 抽象的“每步能量有界 + 时间多项式有界 ⇒ 作用量多项式有界”定理（自然数版本）。 -/
+lemma pathActionNat_polyUpper
+    {n : ℕ} (A : AlgorithmModel n)
+    (density : A.StateType → ℕ) (C : ℕ)
+    (hC : ∀ (Φ : CNF n) (ψ : ComputationPath A Φ) (t : Fin (ψ.T + 1)),
+      density (ψ.states t) ≤ C)
+    (P : ℕ → ℕ)
+    (hP : ∀ (Φ : CNF n) (ψ : ComputationPath A Φ), ψ.T ≤ P n) :
+    ∀ (Φ : CNF n) (ψ : ComputationPath A Φ),
+      pathActionNat A Φ density ψ ≤ (P n + 1) * C := by
+  intro Φ ψ
+  classical
+  -- 每一步都有 density(s_t) ≤ C
+  have h_each : ∀ t : Fin (ψ.T + 1), density (ψ.states t) ≤ C :=
+    fun t => hC Φ ψ t
+
+  /- ∑ density ≤ ∑ 常数 C -/
+  have h_sum_le' :
+    (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+        (fun t => density (ψ.states t))
+      ≤
+    (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+        (fun _ => C) := by
+    refine Finset.sum_le_sum ?h
+    intro t ht
+    exact h_each t
+
+  /- 常数和：∑_t C = (T+1) * C -/
+  have h_sum_const :
+    (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
+      =
+    (ψ.T + 1) * C := by
+    -- 先用 sum_const_nat 得到 card * C
+    have h0 :
+      (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
+        =
+      (Finset.univ : Finset (Fin (ψ.T + 1))).card * C := by
+      simpa using
+        (Finset.sum_const_nat
+          (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
+          (b := C))
+    -- 再用 card_univ = ψ.T + 1
+    have h_card :
+      (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
+      simpa [Finset.card_univ, Fintype.card_fin]
+    simpa [h_card] using h0
+
+  -- 时间上界 ψ.T ≤ P n ⇒ ψ.T + 1 ≤ P n + 1
+  have hT : ψ.T + 1 ≤ P n + 1 :=
+    Nat.succ_le_succ (hP Φ ψ)
+
+  have hT_mul : (ψ.T + 1) * C ≤ (P n + 1) * C :=
+    Nat.mul_le_mul_right _ hT
+
+  /- 最终 calc 链 -/
+  calc
+    pathActionNat A Φ density ψ
+        = (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+            (fun t => density (ψ.states t)) := by rfl
+    _ ≤ (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C) := h_sum_le'
+    _ = (ψ.T + 1) * C := h_sum_const
+    _ ≤ (P n + 1) * C := hT_mul
+
+/-- DPLL 的结构作用量（Nat）：定义为 pathActionNat 的特例。 -/
+noncomputable
+def dpllAction {n : Nat} (Φ : CNF n)
+    (ψ : DPLLPath n Φ) : Nat :=
+  pathActionNat (A := DPLLModel n) Φ
+    (fun s => dpllStructuralDensity s) ψ
+
+/-- CDCL 的结构作用量（Nat）：定义为 pathActionNat 的特例。 -/
+noncomputable
+def cdclAction {n : Nat} (Φ : CNF n)
+    (ψ : CDCLPath n Φ) : Nat :=
+  pathActionNat (A := CDCLModel n) Φ
+    (fun s => cdclStructuralDensity s) ψ
+
+/-- DPLL 版的多项式上界：  
+    如果每步结构密度有界且时间 T 多项式有界，则 dpllAction 也多项式有界。 -/
+lemma dpllAction_polyUpper
+    {n : ℕ} (C : ℕ) (P : ℕ → ℕ)
+    (hC : ∀ (Φ : CNF n) (ψ : DPLLPath n Φ) (t : Fin (ψ.T + 1)),
+      dpllStructuralDensity (ψ.states t) ≤ C)
+    (hP : ∀ (Φ : CNF n) (ψ : DPLLPath n Φ), ψ.T ≤ P n) :
+    ∀ (Φ : CNF n) (ψ : DPLLPath n Φ),
+      dpllAction Φ ψ ≤ (P n + 1) * C := by
+  intro Φ ψ
+  have h :=
+    pathActionNat_polyUpper
+      (A := DPLLModel n)
+      (density := fun s => dpllStructuralDensity s)
+      C
+      (by
+        intro Φ' ψ' t
+        exact hC Φ' ψ' t)
+      P
+      (by
+        intro Φ' ψ'
+        exact hP Φ' ψ')
+      Φ ψ
+  -- 只需要把 dpllAction 展开成 pathActionNat
+  simpa [dpllAction] using h
+
+/-- CDCL 版的多项式上界：  
+    如果每步结构密度有界且时间 T 多项式有界，则 cdclAction 也多项式有界。 -/
+lemma cdclAction_polyUpper
+    {n : ℕ} (C : ℕ) (P : ℕ → ℕ)
+    (hC : ∀ (Φ : CNF n) (ψ : CDCLPath n Φ) (t : Fin (ψ.T + 1)),
+      cdclStructuralDensity (ψ.states t) ≤ C)
+    (hP : ∀ (Φ : CNF n) (ψ : CDCLPath n Φ), ψ.T ≤ P n) :
+    ∀ (Φ : CNF n) (ψ : CDCLPath n Φ),
+      cdclAction Φ ψ ≤ (P n + 1) * C := by
+  intro Φ ψ
+  have h :=
+    pathActionNat_polyUpper
+      (A := CDCLModel n)
+      (density := fun s => cdclStructuralDensity s)
+      C
+      (by
+        intro Φ' ψ' t
+        exact hC Φ' ψ' t)
+      P
+      (by
+        intro Φ' ψ'
+        exact hP Φ' ψ')
+      Φ ψ
+  simpa [cdclAction] using h
+
+end NatActionUpper
+
+
+/-! ------------------------------------------------------------
+### 14. 玩具版 “指数下界 + 多项式上界 ⇒ 矛盾” 定理 （完全无公理版）
 使用 ℕ 上的 `2^n` 和 `n^2`。
 ------------------------------------------------------------ -/
 
@@ -366,9 +500,6 @@ def ExpLower_2pow (A : ActionSeq) : Prop :=
 >  1. ∀n, A n ≥ 2^n
 >  2. ∀n, A n ≤ n^2
 > 那么矛盾。
-
-这就是：
-“指数下界 + 多项式上界” 在一个统一的 A 上不可能同时成立。
 -/
 theorem toy_hardFamily_contradiction
     (A : ActionSeq)
@@ -389,4 +520,5 @@ theorem toy_hardFamily_contradiction
   exact lt_irrefl _ h_absurd
 
 end StructuralAction
+
 
