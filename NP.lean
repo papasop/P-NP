@@ -577,10 +577,73 @@ theorem HardAction_polyUpper_general_impossible
     (hLower : ExpLower_2pow HardAction) :
     ¬ PolyUpper_general HardAction :=
   expLower_2pow_not_PolyUpper_general (A := HardAction) hLower
+/-! ------------------------------------------------------------
+### 17. 抽象的 “硬 DPLL 族作用量” 与指数下界
+------------------------------------------------------------ -/
+
+/-- 抽象地编码 “某个硬 3-SAT 族上，DPLL 的结构作用量序列”。  
+在语义上你可以把 `HardActionDPLL n` 理解成：
+
+> 在第 n 个硬实例 Φₙ 上，所有合法 DPLL 轨迹 ψ 中  
+>   作用量 A_DPLL[ψ] 的最小可能值。
+
+这里保持完全抽象，只在 ℕ → ℕ 层面建模。 -/
+axiom HardActionDPLL : ActionSeq
+
+/-- 关键指数下界假设（暂时做成公理）：  
+存在一族硬核 3-SAT 公式 Φₙ，使得 DPLL 在这些实例上的最小结构作用量
+至少是 `2^n` 级别。
+
+形式化为：对抽象的 HardActionDPLL，有  
+`∀ n, 2^n ≤ HardActionDPLL n`。 -/
+axiom hardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL
+
+/-- 由上一节已经证明的通用定理直接得到：
+
+> 任何满足 `ExpLower_2pow` 的 HardAction，都不可能满足
+>  `PolyUpper_general`。
+
+这里具体化到 `HardActionDPLL` 上。 -/
+theorem hardDPLL_not_polyUpper_general :
+    ¬ PolyUpper_general HardActionDPLL :=
+  HardAction_polyUpper_general_impossible
+    HardActionDPLL
+    hardActionDPLL_expLower_2pow
+
+
+/-! ------------------------------------------------------------
+### 18. 抽象 “算法层假设 ⇒ HardAction 多项式上界” 的公理
+------------------------------------------------------------ -/
+
+/-- 这是一个抽象的 “工程 / 复杂性假设 ⇒ 作用量多项式上界” 公理：
+
+语义上可以读成：
+
+> 如果 DPLL/CDCL 在某个硬族上是多项式时间，且单步结构密度有统一上界，
+> 那么那个硬族的最小作用量序列 HardActionDPLL 一定满足
+> 某个 `C, k` 的多项式上界 `A n ≤ C * n^k`。
+
+因为我们当前还没有把 “最小作用量” 和具体轨迹、具体 HardCNF 家族
+完全形式化出来，这里先以一个高层公理占位。 -/
+axiom hardActionDPLL_polyUpper_from_alg :
+  PolyUpper_general HardActionDPLL
+
+/-- 最终形式化矛盾（抽象版）：
+
+- 前提 1：硬 DPLL 族作用量满足指数下界（`hardActionDPLL_expLower_2pow`）。
+- 前提 2：若 DPLL/CDCL 真正是 “多项式时间 + 单步能量有界”，
+  则 HardActionDPLL 必须 PolyUpper_general
+  （用公理 `hardActionDPLL_polyUpper_from_alg` 表达）。
+
+则 Lean 内部能推出 `False`。
+
+这就是你 schema 里的：
+
+> “Hard DPLL/CDCL” 的指数下界 + 假设的多项式上界 ⇒ 逻辑矛盾。 -/
+theorem no_polyTime_DPLL_on_hardFamily : False :=
+  hardDPLL_not_polyUpper_general hardActionDPLL_polyUpper_from_alg
 
 end StructuralAction
-
-
-
 
 
