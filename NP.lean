@@ -520,5 +520,3 @@ theorem toy_hardFamily_contradiction
   exact lt_irrefl _ h_absurd
 
 end StructuralAction
-
-
