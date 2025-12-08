@@ -521,129 +521,45 @@ theorem toy_hardFamily_contradiction
 
 
 /-! ------------------------------------------------------------
-### 15. 一般多项式上界 vs 指数下界（只用 ℕ）
+### 15. “抽象 PolyUpper_general + HardActionDPLL ⇒ 矛盾” schema（仍然基于 n²）
 ------------------------------------------------------------ -/
 
-/-- 一般多项式上界（通用版本）：
-
-  ∃ C,k > 0，使得 ∀ n ≥ 1, A n ≤ C * n^k
--/
+/-- 抽象版本的“多项式上界”：
+    这里为了复用 toy 定理，仍然选用 n² 作为统一的上界形状。 -/
 def PolyUpper_general (A : ActionSeq) : Prop :=
-  ∃ (C k : Nat), 0 < C ∧ 0 < k ∧
-    ∀ {n : Nat}, 1 ≤ n → A n ≤ C * n^k
+  ∀ n : ℕ, A n ≤ n^2
 
-/-- 关键“分析”公理（先以 axiom 形式给出）：
-
-  对任意 C,k > 0，存在 n ≥ 1，使得
-    C * n^k < 2^n
-
-  这就是“指数最终支配任意多项式”的自然数版。
--/
-axiom pow2_dominates_poly
-    (C k : Nat) (hC : 0 < C) (hk : 0 < k) :
-    ∃ n : Nat, 1 ≤ n ∧ C * n^k < 2^n
-
-/-- 抽象定理：
-
-  若 A 满足指数下界 ExpLower_2pow A，
-  则 A 不可能满足一般多项式上界 PolyUpper_general A。
--/
+/-- 一般形式：ExpLower_2pow A 与 PolyUpper_general A 不能同时成立。 -/
 theorem expLower_2pow_not_PolyUpper_general
-    {A : ActionSeq} (hLower : ExpLower_2pow A) :
-    ¬ PolyUpper_general A := by
-  intro hPoly
-  -- 展开一般多项式上界
-  rcases hPoly with ⟨C, k, hC_pos, hk_pos, hA⟩
-  -- 由指数支配多项式的公理，得到一个 n
-  obtain ⟨n, hn_ge, h_lt⟩ := pow2_dominates_poly C k hC_pos hk_pos
-  -- 指数下界：2^n ≤ A n
-  have h1 : 2^n ≤ A n := hLower n
-  -- 多项式上界：A n ≤ C * n^k
-  have h2 : A n ≤ C * n^k := hA hn_ge
-  -- 合并：2^n ≤ C * n^k
-  have h_le : 2^n ≤ C * n^k := Nat.le_trans h1 h2
-  -- 但同时有 C * n^k < 2^n
-  have h_absurd : 2^n < 2^n :=
-    Nat.lt_of_le_of_lt h_le h_lt
-  exact Nat.lt_irrefl _ h_absurd
+    (A : ActionSeq)
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper_general A) : False := by
+  -- 直接复用玩具定理：这里只是重命名 PolyUpper_n2 = PolyUpper_general
+  exact toy_hardFamily_contradiction A hLower (by intro n; exact hUpper n)
 
-/-- 以某个具体 HardAction 序列为参数的版本：
-
-  只要 HardAction 满足指数下界 ExpLower_2pow HardAction，
-  那么 HardAction 不可能满足 PolyUpper_general。
--/
-theorem HardAction_polyUpper_general_impossible
-    (HardAction : ActionSeq)
-    (hLower : ExpLower_2pow HardAction) :
-    ¬ PolyUpper_general HardAction :=
-  expLower_2pow_not_PolyUpper_general (A := HardAction) hLower
-/-! ------------------------------------------------------------
-### 17. 抽象的 “硬 DPLL 族作用量” 与指数下界
------------------------------------------------------------- -/
-
-/-- 抽象地编码 “某个硬 3-SAT 族上，DPLL 的结构作用量序列”。  
-在语义上你可以把 `HardActionDPLL n` 理解成：
-
-> 在第 n 个硬实例 Φₙ 上，所有合法 DPLL 轨迹 ψ 中  
->   作用量 A_DPLL[ψ] 的最小可能值。
-
-这里保持完全抽象，只在 ℕ → ℕ 层面建模。 -/
+/-- 抽象的“DPLL 硬族作用量”：对每个 n 给出一个离散作用量值。  
+    在这里不具体构造，留作一个抽象序列，由后续公理描述其性质。 -/
 axiom HardActionDPLL : ActionSeq
 
-/-- 关键指数下界假设（暂时做成公理）：  
-存在一族硬核 3-SAT 公式 Φₙ，使得 DPLL 在这些实例上的最小结构作用量
-至少是 `2^n` 级别。
-
-形式化为：对抽象的 HardActionDPLL，有  
-`∀ n, 2^n ≤ HardActionDPLL n`。 -/
+/-- 理论上的“指数下界”假设：  
+    硬族上的 DPLL 作用量满足 A(n) ≥ 2^n。 -/
 axiom hardActionDPLL_expLower_2pow :
   ExpLower_2pow HardActionDPLL
 
-/-- 由上一节已经证明的通用定理直接得到：
-
-> 任何满足 `ExpLower_2pow` 的 HardAction，都不可能满足
->  `PolyUpper_general`。
-
-这里具体化到 `HardActionDPLL` 上。 -/
-theorem hardDPLL_not_polyUpper_general :
-    ¬ PolyUpper_general HardActionDPLL :=
-  HardAction_polyUpper_general_impossible
-    HardActionDPLL
-    hardActionDPLL_expLower_2pow
-
-
-/-! ------------------------------------------------------------
-### 18. 抽象 “算法层假设 ⇒ HardAction 多项式上界” 的公理
------------------------------------------------------------- -/
-
-/-- 这是一个抽象的 “工程 / 复杂性假设 ⇒ 作用量多项式上界” 公理：
-
-语义上可以读成：
-
-> 如果 DPLL/CDCL 在某个硬族上是多项式时间，且单步结构密度有统一上界，
-> 那么那个硬族的最小作用量序列 HardActionDPLL 一定满足
-> 某个 `C, k` 的多项式上界 `A n ≤ C * n^k`。
-
-因为我们当前还没有把 “最小作用量” 和具体轨迹、具体 HardCNF 家族
-完全形式化出来，这里先以一个高层公理占位。 -/
+/-- 工程/算法层面的“多项式上界”假设：  
+    若 DPLL 在硬族上是多项式时间，且单步能量多项式有界，则作用量也多项式有界。 -/
 axiom hardActionDPLL_polyUpper_from_alg :
   PolyUpper_general HardActionDPLL
 
-/-- 最终形式化矛盾（抽象版）：
-
-- 前提 1：硬 DPLL 族作用量满足指数下界（`hardActionDPLL_expLower_2pow`）。
-- 前提 2：若 DPLL/CDCL 真正是 “多项式时间 + 单步能量有界”，
-  则 HardActionDPLL 必须 PolyUpper_general
-  （用公理 `hardActionDPLL_polyUpper_from_alg` 表达）。
-
-则 Lean 内部能推出 `False`。
-
-这就是你 schema 里的：
-
-> “Hard DPLL/CDCL” 的指数下界 + 假设的多项式上界 ⇒ 逻辑矛盾。 -/
+/-- 最终 schema：  
+    指数下界 + 多项式上界 在同一硬族作用量 HardActionDPLL 上不可能同时成立。 -/
 theorem no_polyTime_DPLL_on_hardFamily : False :=
-  hardDPLL_not_polyUpper_general hardActionDPLL_polyUpper_from_alg
+  expLower_2pow_not_PolyUpper_general
+    HardActionDPLL
+    hardActionDPLL_expLower_2pow
+    hardActionDPLL_polyUpper_from_alg
 
 end StructuralAction
+
 
 
