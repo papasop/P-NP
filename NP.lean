@@ -521,109 +521,62 @@ theorem toy_hardFamily_contradiction
 
 
 /-! ------------------------------------------------------------
-### 15. 显式 Hard family：HardAction n = 2^n
-    并接入 toy_hardFamily_contradiction 得到矛盾
+### 15. 一般多项式上界 vs 指数下界（只用 ℕ）
 ------------------------------------------------------------ -/
 
-section ExplicitHardSeq
+/-- 一般多项式上界（通用版本）：
 
-/-- 显式的 Hard family：作用量序列就是 2^n。 -/
-def HardAction (n : ℕ) : ℕ :=
-  2 ^ n
-
-/-- HardAction 满足我们之前定义的“指数下界”：∀ n, 2^n ≤ A n。 -/
-lemma HardAction_expLower_2pow :
-  ExpLower_2pow HardAction := by
-  -- 展开定义以后，目标就是 ∀ n, 2^n ≤ 2^n
-  intro n
-  dsimp [HardAction]
-  exact le_rfl
-
-/--
-主结论（玩具层）：不存在一个 n^2 的多项式上界，
-可以同时约束 HardAction n = 2^n。
-
-即：`PolyUpper_n2 HardAction` 这一假设会与
-`toy_hardFamily_contradiction` 形成矛盾。
+  ∃ C,k > 0，使得 ∀ n ≥ 1, A n ≤ C * n^k
 -/
-theorem HardAction_polyUpper_impossible :
-  ¬ PolyUpper_n2 HardAction := by
-  intro hUpper
-  -- 指数下界（已经刚刚证明）
-  have hLower : ExpLower_2pow HardAction :=
-    HardAction_expLower_2pow
-  -- 套用之前已经完全形式化好的玩具矛盾定理
-  exact toy_hardFamily_contradiction
-          HardAction
-          hLower
-          hUpper
+def PolyUpper_general (A : ActionSeq) : Prop :=
+  ∃ (C k : Nat), 0 < C ∧ 0 < k ∧
+    ∀ {n : Nat}, 1 ≤ n → A n ≤ C * n^k
 
-end ExplicitHardSeq
+/-- 关键“分析”公理（先以 axiom 形式给出）：
 
+  对任意 C,k > 0，存在 n ≥ 1，使得
+    C * n^k < 2^n
 
-/-! ------------------------------------------------------------
-### 16. DPLL / CDCL 指数下界（玩具版接口）
-这里把 “Hard family 上的 DPLL/CDCL 作用量序列”
-在玩具层面上等同于 HardAction，用来表示：
+  这就是“指数最终支配任意多项式”的自然数版。
+-/
+axiom pow2_dominates_poly
+    (C k : Nat) (hC : 0 < C) (hk : 0 < k) :
+    ∃ n : Nat, 1 ≤ n ∧ C * n^k < 2^n
 
-> hardActionDPLL n ≥ 2^n, hardActionCDCL n ≥ 2^n
+/-- 抽象定理：
 
-真正的数学内容是：  
-在那族 Hard 3-SAT 公式 Φₙ 上，任意 DPLL/CDCL 轨迹 ψₙ 的结构作用量
-是指数级的；在 Lean 里我们先把这一步压缩成一个“同一序列”的接口。
------------------------------------------------------------- -/
+  若 A 满足指数下界 ExpLower_2pow A，
+  则 A 不可能满足一般多项式上界 PolyUpper_general A。
+-/
+theorem expLower_2pow_not_PolyUpper_general
+    {A : ActionSeq} (hLower : ExpLower_2pow A) :
+    ¬ PolyUpper_general A := by
+  intro hPoly
+  -- 展开一般多项式上界
+  rcases hPoly with ⟨C, k, hC_pos, hk_pos, hA⟩
+  -- 由指数支配多项式的公理，得到一个 n
+  obtain ⟨n, hn_ge, h_lt⟩ := pow2_dominates_poly C k hC_pos hk_pos
+  -- 指数下界：2^n ≤ A n
+  have h1 : 2^n ≤ A n := hLower n
+  -- 多项式上界：A n ≤ C * n^k
+  have h2 : A n ≤ C * n^k := hA hn_ge
+  -- 合并：2^n ≤ C * n^k
+  have h_le : 2^n ≤ C * n^k := Nat.le_trans h1 h2
+  -- 但同时有 C * n^k < 2^n
+  have h_absurd : 2^n < 2^n :=
+    Nat.lt_of_le_of_lt h_le h_lt
+  exact Nat.lt_irrefl _ h_absurd
 
-section DPLL_CDCL_ExpLower
+/-- 以某个具体 HardAction 序列为参数的版本：
 
-/-- 抽象地表示 “Hard family 上 DPLL 的作用量序列”。  
-    在本玩具版本中，我们直接把它定义为 HardAction。 -/
-def hardActionDPLL : ActionSeq :=
-  HardAction
-
-/-- 抽象地表示 “Hard family 上 CDCL 的作用量序列”。  
-    在本玩具版本中，同样直接定义为 HardAction。 -/
-def hardActionCDCL : ActionSeq :=
-  HardAction
-
-/-- DPLL 版本的指数下界：hardActionDPLL n ≥ 2^n。 -/
-lemma hardActionDPLL_expLower_2pow :
-  ExpLower_2pow hardActionDPLL := by
-  -- 直接复用 HardAction_expLower_2pow
-  intro n
-  dsimp [hardActionDPLL, HardAction]
-  exact le_rfl
-
-/-- CDCL 版本的指数下界：hardActionCDCL n ≥ 2^n。 -/
-lemma hardActionCDCL_expLower_2pow :
-  ExpLower_2pow hardActionCDCL := by
-  intro n
-  dsimp [hardActionCDCL, HardAction]
-  exact le_rfl
-
-/-- DPLL：Hard family 上不存在 n^2 的多项式上界（玩具版本）。 -/
-theorem hardActionDPLL_polyUpper_impossible :
-  ¬ PolyUpper_n2 hardActionDPLL := by
-  intro hUpper
-  -- 把假设转移到 HardAction 上
-  have hUpper' : PolyUpper_n2 HardAction := by
-    intro n
-    -- hUpper : ∀ n, hardActionDPLL n ≤ n^2
-    specialize hUpper n
-    simpa [hardActionDPLL, HardAction] using hUpper
-  -- 与前面已经证明的 HardAction_polyUpper_impossible 矛盾
-  exact HardAction_polyUpper_impossible hUpper'
-
-/-- CDCL：Hard family 上不存在 n^2 的多项式上界（玩具版本）。 -/
-theorem hardActionCDCL_polyUpper_impossible :
-  ¬ PolyUpper_n2 hardActionCDCL := by
-  intro hUpper
-  have hUpper' : PolyUpper_n2 HardAction := by
-    intro n
-    specialize hUpper n
-    simpa [hardActionCDCL, HardAction] using hUpper
-  exact HardAction_polyUpper_impossible hUpper'
-
-end DPLL_CDCL_ExpLower
+  只要 HardAction 满足指数下界 ExpLower_2pow HardAction，
+  那么 HardAction 不可能满足 PolyUpper_general。
+-/
+theorem HardAction_polyUpper_general_impossible
+    (HardAction : ActionSeq)
+    (hLower : ExpLower_2pow HardAction) :
+    ¬ PolyUpper_general HardAction :=
+  expLower_2pow_not_PolyUpper_general (A := HardAction) hLower
 
 end StructuralAction
 
