@@ -518,78 +518,150 @@ theorem toy_hardFamily_contradiction
   have h_absurd : (2 : ℕ)^10 < (2 : ℕ)^10 :=
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
+
+
 /-! ------------------------------------------------------------
-### 15. 一般版：多项式上界 vs 2^n 指数下界的矛盾 Schema
+### 15. 一般化：任意多项式上界 P(n) 的抽象版本
 ------------------------------------------------------------ -/
 
 namespace GeneralGrowth
 
-open StructuralAction
-
-/-- 一般的多项式上界：给定任意 `P : ℕ → ℕ`，`A` 被 `P` 上界。 -/
+/-- 一般的“多项式上界”谓词：`A` 被某个 `P` 从上界定。 -/
 def PolyUpper (A P : ℕ → ℕ) : Prop :=
   ∀ n : ℕ, A n ≤ P n
 
-/-- 一般版 Schema：
+/-- 一般指数下界：这里沿用 StructuralAction.ExpLower_2pow。 -/
+abbrev ExpLower_2pow (A : ℕ → ℕ) : Prop :=
+  StructuralAction.ExpLower_2pow A
 
-如果存在某个具体的 `n₀` 使得
+/--
+给定某个具体的见证点 `n0`，如果
 
-* `ExpLower_2pow A`：对所有 n 有 `2^n ≤ A n`
-* `PolyUpper A P`：对所有 n 有 `A n ≤ P n`
-* 但 `P n₀ < 2^n₀`
+* A(n) ≥ 2^n
+* A(n) ≤ P(n)
+* 且 P(n0) < 2^n0
 
-那么矛盾。
-
-这个定理是完全无公理、纯算术的。 -/
+就能立刻得到矛盾。 -/
 theorem expLower_polyUpper_contradiction_withWitness
-    {A P : ℕ → ℕ}
+    (A P : ℕ → ℕ)
     (hLower : ExpLower_2pow A)
     (hUpper : PolyUpper A P)
-    (hWitness : ∃ n₀ : ℕ, P n₀ < (2 : ℕ)^n₀) :
-    False := by
-  -- 取出见证 n₀
-  rcases hWitness with ⟨n₀, hP_lt⟩
-  -- 从指数下界和多项式上界得到 2^n₀ ≤ P n₀
-  have h1 : (2 : ℕ)^n₀ ≤ A n₀ := hLower n₀
-  have h2 : A n₀ ≤ P n₀ := hUpper n₀
-  have h_le : (2 : ℕ)^n₀ ≤ P n₀ := le_trans h1 h2
-  -- 又有 P n₀ < 2^n₀
-  have h_lt : P n₀ < (2 : ℕ)^n₀ := hP_lt
-  -- 合并得到 2^n₀ < 2^n₀
-  have h_absurd : (2 : ℕ)^n₀ < (2 : ℕ)^n₀ :=
+    (n0 : ℕ)
+    (h_gt : P n0 < 2^n0) : False := by
+  have h₁ : (2 : ℕ)^n0 ≤ A n0 := hLower n0
+  have h₂ : A n0 ≤ P n0 := hUpper n0
+  have h_le : (2 : ℕ)^n0 ≤ P n0 := le_trans h₁ h₂
+  have h_lt : P n0 < (2 : ℕ)^n0 := h_gt
+  have h_absurd : (2 : ℕ)^n0 < (2 : ℕ)^n0 :=
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
 
+/--
+一个抽象公理：**指数支配所有多项式**（在 ℕ 上版本）。
 
-/-- **核心增长性公理（占位）**：
-
-对于任意 `P : ℕ → ℕ`（你将来想把它限定成“多项式”），
-都存在一个 n₀ 使得 `P n₀ < 2^n₀`。
-
-这一条在标准数学中是事实（“指数最终支配任何多项式”），
-目前在 Lean 里我们先把它作为单独的公理，以后可以用实分析替换。 -/
+它声称：对任意给定的函数 `P : ℕ → ℕ`（在你的应用里是多项式），
+都存在某个 `n0` 使得 `P n0 < 2^n0`。 -/
 axiom poly_vs_exp_witness (P : ℕ → ℕ) :
-  ∃ n₀ : ℕ, P n₀ < (2 : ℕ)^n₀
+  ∃ n0 : ℕ, P n0 < 2^n0
 
-/-- 利用 `poly_vs_exp_witness`，给出一个**完全一般的**矛盾定理：
+/--
+综合版：如果同一个 A : ℕ → ℕ 同时满足
 
-只要某个序列 `A` 同时满足
+* 指数下界：A(n) ≥ 2^n
+* 某个 P 的多项式上界：A(n) ≤ P(n)
 
-* `ExpLower_2pow A`（指数下界）
-* `PolyUpper A P`（被某个 P 上界）
-
-就能推出 False。 -/
+则矛盾（利用 `poly_vs_exp_witness` 给出的指数支配见证）。 -/
 theorem expLower_incompatible_with_polyUpper
-    {A P : ℕ → ℕ}
+    (A P : ℕ → ℕ)
     (hLower : ExpLower_2pow A)
-    (hUpper : PolyUpper A P) :
-    False := by
-  -- 从公理拿到一个 n₀，使得 P n₀ < 2^n₀
-  have hW : ∃ n₀, P n₀ < (2 : ℕ)^n₀ := poly_vs_exp_witness P
-  -- 套用上面那个带 witness 的纯算术定理
-  exact expLower_polyUpper_contradiction_withWitness hLower hUpper hW
+    (hUpper : PolyUpper A P) : False := by
+  obtain ⟨n0, h_gt⟩ := poly_vs_exp_witness P
+  exact expLower_polyUpper_contradiction_withWitness
+    A P hLower hUpper n0 h_gt
 
 end GeneralGrowth
 
+
+/-! ------------------------------------------------------------
+### 16. 抽象 Hard 3-SAT 家族 + DPLL/CDCL Schema
+------------------------------------------------------------ -/
+
+namespace HardFamily
+
+open GeneralGrowth
+
+/-- 抽象的 Hard 3-SAT 家族：  
+对于每个规模 `k`，给出一个“真正的变量数 n”和公式 `Φ : CNF n`。 -/
+axiom HardCNF : ℕ → (Σ n, CNF n)
+
+/-- 对第 k 个 hard 公式，变量个数 `n`。 -/
+noncomputable def hardSize (k : ℕ) : ℕ :=
+  (HardCNF k).1
+
+/-- 对第 k 个 hard 公式，公式本身。 -/
+noncomputable def hardFormula (k : ℕ) : CNF (hardSize k) :=
+  (HardCNF k).2
+
+/-- Hard family 上 DPLL 的一个固定运行轨迹（抽象存在性）。 -/
+axiom hardDPLLPath :
+  ∀ k : ℕ, DPLLPath (hardSize k) (hardFormula k)
+
+/-- Hard family 上 CDCL 的一个固定运行轨迹。 -/
+axiom hardCDCLPath :
+  ∀ k : ℕ, CDCLPath (hardSize k) (hardFormula k)
+
+/-- Hard family 上 DPLL 的结构作用量序列：A_DPLL(k) = dpllAction[ψ_k]。 -/
+noncomputable
+def HardActionDPLL (k : ℕ) : ℕ :=
+  let Φ := hardFormula k
+  let ψ := hardDPLLPath k
+  dpllAction Φ ψ
+
+/-- Hard family 上 CDCL 的结构作用量序列：A_CDCL(k) = cdclAction[ψ_k]。 -/
+noncomputable
+def HardActionCDCL (k : ℕ) : ℕ :=
+  let Φ := hardFormula k
+  let ψ := hardCDCLPath k
+  cdclAction Φ ψ
+
+/-- **假设 1（schema）：Hard family 上 DPLL 作用量有 2^k 的指数下界。** -/
+axiom hardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL
+
+/-- **假设 1'（schema）：Hard family 上 CDCL 作用量有 2^k 的指数下界。** -/
+axiom hardActionCDCL_expLower_2pow :
+  ExpLower_2pow HardActionCDCL
+
+/-- **假设 2（schema）：Hard family 上 DPLL 的作用量具有某个多项式上界。** -/
+axiom hardActionDPLL_polyUpper :
+  ∃ P_DPLL : ℕ → ℕ,
+    PolyUpper HardActionDPLL P_DPLL
+
+/-- **假设 2'（schema）：Hard family 上 CDCL 的作用量具有某个多项式上界。** -/
+axiom hardActionCDCL_polyUpper :
+  ∃ P_CDCL : ℕ → ℕ,
+    PolyUpper HardActionCDCL P_CDCL
+
+/-- **主结论 1（DPLL 版）**：
+
+在以上两个假设同时成立的前提下，Hard family 上 DPLL 不可能是多项式时间的。 -/
+theorem no_polytime_DPLL_on_hardFamily : False := by
+  rcases hardActionDPLL_polyUpper with ⟨P, hP⟩
+  exact expLower_incompatible_with_polyUpper
+    (A := HardActionDPLL) (P := P)
+    hardActionDPLL_expLower_2pow hP
+
+/-- **主结论 2（CDCL 版）**：
+
+同理，Hard family 上 CDCL 也不可能是多项式时间的。 -/
+theorem no_polytime_CDCL_on_hardFamily : False := by
+  rcases hardActionCDCL_polyUpper with ⟨P, hP⟩
+  exact expLower_incompatible_with_polyUpper
+    (A := HardActionCDCL) (P := P)
+    hardActionCDCL_expLower_2pow hP
+
+end HardFamily
+
 end StructuralAction
+
 
