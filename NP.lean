@@ -521,35 +521,44 @@ theorem toy_hardFamily_contradiction
 
 
 /-! ------------------------------------------------------------
-### 15. 一个“显式 Hard family 动作序列”的指数下界证明
+### 15. 显式 Hard family：HardAction n = 2^n
+    并接入 toy_hardFamily_contradiction 得到矛盾
 ------------------------------------------------------------ -/
 
-namespace ExplicitHardSeq
+section ExplicitHardSeq
 
-/-- 显式 Hard family 的动作序列：直接定义为 `2^n`。 -/
+/-- 显式的 Hard family：作用量序列就是 2^n。 -/
 def HardAction (n : ℕ) : ℕ :=
-  2^n
+  2 ^ n
+
+/-- HardAction 满足我们之前定义的“指数下界”：∀ n, 2^n ≤ A n。 -/
+lemma HardAction_expLower_2pow :
+  ExpLower_2pow HardAction := by
+  -- 展开定义以后，目标就是 ∀ n, 2^n ≤ 2^n
+  intro n
+  dsimp [HardAction]
+  exact le_rfl
 
 /--
-该 HardAction 显式满足指数下界条件 `ExpLower_2pow`：
+主结论（玩具层）：不存在一个 n^2 的多项式上界，
+可以同时约束 HardAction n = 2^n。
 
-`ExpLower_2pow HardAction` 展开就是：
-`∀ n, 2^n ≤ HardAction n`。
+即：`PolyUpper_n2 HardAction` 这一假设会与
+`toy_hardFamily_contradiction` 形成矛盾。
 -/
-lemma HardAction_expLower_2pow :
-    ExpLower_2pow HardAction := by
-  -- 目标：∀ n, 2^n ≤ HardAction n
-  intro n
-  -- 展开 HardAction：HardAction n = 2^n
-  -- 于是目标变成 2^n ≤ 2^n，`simp` 直接解决
-  simp [HardAction]
+theorem HardAction_polyUpper_impossible :
+  ¬ PolyUpper_n2 HardAction := by
+  intro hUpper
+  -- 指数下界（已经刚刚证明）
+  have hLower : ExpLower_2pow HardAction :=
+    HardAction_expLower_2pow
+  -- 套用之前已经完全形式化好的玩具矛盾定理
+  exact toy_hardFamily_contradiction
+          HardAction
+          hLower
+          hUpper
 
 end ExplicitHardSeq
-
-/-- 一个在 StructuralAction 命名空间外层方便用的别名。 -/
-lemma explicit_hard_expLower_2pow :
-    ExpLower_2pow ExplicitHardSeq.HardAction :=
-  ExplicitHardSeq.HardAction_expLower_2pow
 
 end StructuralAction
 
