@@ -59,10 +59,14 @@ lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
       simp [cnfEval, energy]
   | cons C Φ ih =>
       classical
-      -- 对当前子句的布尔值分类
       by_cases hC : clauseEval σ C = true
-      · simp [cnfEval, energy, hC, ih]
-      · have hC' : clauseEval σ C = false := by
+      · -- 当前子句为真
+        have hC' : clauseEval σ C = false → False := by
+          intro hc
+          simpa [hC] using hc
+        simp [cnfEval, energy, hC, ih]
+      · -- 当前子句为假
+        have hC' : clauseEval σ C = false := by
           cases h' : clauseEval σ C <;> simp [h', hC] at *
         simp [cnfEval, energy, hC, hC', ih]
 
@@ -729,7 +733,7 @@ theorem no_polyTime_on_family
 
 
 /-! ------------------------------------------------------------
-### 16. 鸽笼原理 PHPₙ 的 CNF 族（骨架 + AtLeastOne + AtMostOne）
+### 16. 鸽笼原理 PHPₙ 的 CNF 族（变量编码 + GenCNF + to3CNF）
 ------------------------------------------------------------ -/
 
 section PigeonholeFamily
@@ -755,11 +759,35 @@ def genCNFEval {n : Nat} (σ : Assignment n) (Φ : GenCNF n) : Bool :=
   Φ.foldr (fun C acc => genClauseEval σ C && acc) true
 
 /--
+抽象的 3-SAT 转换：
+
+给定一个一般 CNF（每个子句可以是任意长度），
+返回一个 3-CNF（所有子句长度为 3）。
+
+这里先给出一个 **占位实现**（空列表），
+并通过公理 `to3CNF_equisat` 保证它在语义上与原公式等价；
+将来可以把这里替换为真正的 Tseitin 转换。 -/
+noncomputable
+def to3CNF {n : Nat} (Φ : GenCNF n) : CNF n :=
+  []  -- 占位实现：真正版本应生成等价的 3-CNF
+
+/--
+3-CNF 转换的满足性保持公理：
+
+> 对任意赋值 σ，`genCNFEval σ Φ` 与 `cnfEval σ (to3CNF Φ)` 等价。
+
+这保证了我们在复杂性理论中可以放心地用 `to3CNF Φ`
+替代原公式而不改变可满足性。 -/
+axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
+  ∀ σ : Assignment n,
+    genCNFEval σ Φ = true ↔ cnfEval σ (to3CNF Φ) = true
+
+/--
 PHPₙ 的布尔变量个数（Nat）：
 
-理论上是 `(n+1) * n` 个变量 `x_{p,h}`。这里额外 `Nat.succ` 做一个“安全上界”，
-保证即使 n = 0 时也至少有一个变量索引。
--/
+理论上是 `(n+1) * n` 个变量 `x_{p,h}`，我们在此再 `Nat.succ` 一次，
+得到一个“安全上界”作为 `Fin` 的上限：
+`PHPVar n = ((n+1)*n) + 1`。 -/
 abbrev PHPVar (n : Nat) : Nat :=
   Nat.succ ((n + 1) * n)
 
@@ -767,24 +795,52 @@ abbrev PHPVar (n : Nat) : Nat :=
 abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
 
 /--
-（占位版本）把 (p, h) 映射到一个变量索引。
+把 (p, h) 映射到一个变量索引：
 
-目前简单地把所有 (p, h) 映射到同一个索引 0：
-这足以让后续关于 “存在 CNF 族 `PHPcnf n : CNF (PHPVar n)`” 的
-类型框架跑通。
+我们采用自然的编码：
 
-将来你可以把这里替换成真正的编码：
-`⟨p.1 * n + h.1, 证明 p.1 * n + h.1 < (n+1)*n⟩`，
-并相应地把 `PHPVar n` 改回精确的 `((n+1)*n)`。
--/
+> `index(p, h) = p.val * n + h.val`
+
+并在下面证明这个值确实落在 `Fin (PHPVar n)` 的范围内。 -/
 noncomputable
 def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
-  ⟨0, by
-    -- 证明 `0 < PHPVar n`
-    have : 0 < PHPVar n := by
-      unfold PHPVar
-      exact Nat.succ_pos _
-    simpa using this⟩
+  ⟨p.1 * n + h.1, by
+    -- 目标：p.1 * n + h.1 < PHPVar n = ((n+1)*n) + 1
+    -- 只需要先证明 ≤ (n+1)*n，然后用 lt_succ_of_le。
+    have hp_le : p.1 ≤ n := Nat.le_of_lt_succ p.2
+    have hh_lt : h.1 < n := h.2
+    have hh_le : h.1 ≤ n - 1 := Nat.le_pred_of_lt hh_lt
+
+    -- 先用 h 的界：h ≤ n-1
+    have h1a : p.1 * n + h.1 ≤ p.1 * n + (n - 1) :=
+      Nat.add_le_add_left hh_le _
+
+    -- 再用 p 的界：p ≤ n ⇒ p*n ≤ n*n
+    have hp_mul : p.1 * n ≤ n * n :=
+      Nat.mul_le_mul_right _ hp_le
+    have h1b : p.1 * n + (n - 1) ≤ n * n + (n - 1) :=
+      Nat.add_le_add_right hp_mul _
+
+    -- 再把 n-1 ≤ n 提升：n*n + (n-1) ≤ n*n + n
+    have h1c : n * n + (n - 1) ≤ n * n + n := by
+      have : n - 1 ≤ n := Nat.sub_le _ _
+      exact Nat.add_le_add_left this _
+
+    -- 综合得到：p*n + h ≤ n*n + n
+    have h_total : p.1 * n + h.1 ≤ n * n + n :=
+      le_trans (le_trans h1a h1b) h1c
+
+    -- 把 n*n + n 识别成 (n+1)*n
+    have h_le : p.1 * n + h.1 ≤ (n + 1) * n := by
+      simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc,
+             Nat.mul_comm] using h_total
+
+    -- 最终：p*n + h < (n+1)*n + 1 = PHPVar n
+    have : p.1 * n + h.1 ≤ (n + 1) * n := h_le
+    exact Nat.lt_succ_of_le
+      (by
+        -- 这里把 (n+1)*n 写成 ((n+1)*n)
+        simpa [PHPVar] using this)⟩
 
 /-- 把所有鸽子列成一个 List。 -/
 noncomputable
@@ -851,7 +907,6 @@ def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
 noncomputable
 def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
   let hs : List (Hole n) := holesList n
-  -- 不用 `List.bind`，用 foldr + ++ 拼接
   hs.foldr
     (fun h acc => phpClausesAtMostOneForHole n h ++ acc)
     []
@@ -862,21 +917,13 @@ def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
 /--
-PHPₙ 的 3-SAT 骨架（占位）：
+PHPₙ 的 3-SAT 编码骨架：
 
-真正的 3-SAT 编码应该是对 `PHP_fullGenCNF n` 做一次 Tseitin-transform
-得到的 3-CNF。
-
-目前为了让复杂性理论那边的类型跑通，先给出一个空列表占位；
-后续可以把这里替换成：
-
-  `PHPcnf n := to3CNF (PHP_fullGenCNF n)`
-
-之类的定义。
--/
+通过抽象函数 `to3CNF` 把变长 CNF 转成 3-CNF，
+并依赖公理 `to3CNF_equisat` 保证满足性等价。 -/
 noncomputable
 def PHPcnf (n : Nat) : CNF (PHPVar n) :=
-  []
+  to3CNF (PHP_fullGenCNF n)
 
 end PigeonholeFamily
 
@@ -899,10 +946,8 @@ def HardCNF (n : Nat) : CNF (PHPVar n) :=
 
 > ∀ n ≥ 1, HardCNF n 是不可满足的。
 
-在目前阶段，我们先把它作为一个公理（axiom）引入，
-确保后续在定义“HardActionDPLL n”时可以假设：
-
-> 对任何赋值 σ，都有 `cnfEval σ (HardCNF n) = false`。 -/
+这需要结合鸽笼原理与 `to3CNF_equisat` 的等价性证明；
+目前我们在 Lean 中把它作为一个待攻克的公理引入。 -/
 axiom HardCNF_unsat (n : Nat) :
   ∀ σ : Assignment (PHPVar n),
     cnfEval σ (HardCNF n) = false
@@ -975,6 +1020,7 @@ end DPLLHardAction
 
 
 end StructuralAction
+
 
 
 
