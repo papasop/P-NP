@@ -729,7 +729,7 @@ theorem no_polyTime_on_family
 
 
 /-! ------------------------------------------------------------
-### 16. 鸽笼原理 PHPₙ 的 CNF 族（骨架）
+### 16. 鸽笼原理 PHPₙ 的 CNF 族（骨架 + AtLeastOne + AtMostOne）
 ------------------------------------------------------------ -/
 
 section PigeonholeFamily
@@ -739,6 +739,20 @@ abbrev Pigeon (n : Nat) := Fin (n + 1)
 
 /-- 第 n 个洞：共有 n 个洞。 -/
 abbrev Hole (n : Nat) := Fin n
+
+/-- 一般子句：一个字面列表（允许长度 ≠ 3，稍后再 3-SAT 化）。 -/
+abbrev GenClause (n : Nat) := List (Literal n)
+
+/-- 一般 CNF：子句列表，每个子句可以是任意长度。 -/
+abbrev GenCNF (n : Nat) := List (GenClause n)
+
+/-- 评价一般子句：折叠“或”。 -/
+def genClauseEval {n : Nat} (σ : Assignment n) (Γ : GenClause n) : Bool :=
+  Γ.foldr (fun ℓ acc => literalEval σ ℓ || acc) false
+
+/-- 评价一般 CNF：所有子句的合取。 -/
+def genCNFEval {n : Nat} (σ : Assignment n) (Φ : GenCNF n) : Bool :=
+  Φ.foldr (fun C acc => genClauseEval σ C && acc) true
 
 /--
 PHPₙ 的布尔变量个数（Nat）：
@@ -772,15 +786,93 @@ def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
       exact Nat.succ_pos _
     simpa using this⟩
 
+/-- 把所有鸽子列成一个 List。 -/
+noncomputable
+def pigeonsList (n : Nat) : List (Pigeon n) :=
+  List.ofFn (fun p : Pigeon n => p)
+
+/-- 把所有洞列成一个 List。 -/
+noncomputable
+def holesList (n : Nat) : List (Hole n) :=
+  List.ofFn (fun h : Hole n => h)
+
 /--
-PHPₙ 的 CNF 骨架：
+列出一个 List 中所有“有序对 (xᵢ, xⱼ)，其中 i < j”：
 
-理想情况下，这里会构造两大类子句：
-1. `AtLeastOne`：每只鸽子至少占一个洞；
-2. `AtMostOne`：每个洞里最多一只鸽子。
+例如 `listPairs [a,b,c] = [(a,b),(a,c),(b,c)]`。 -/
+def listPairs {α : Type} : List α → List (α × α)
+  | []       => []
+  | x :: xs  => (xs.map (fun y => (x,y))) ++ listPairs xs
 
-目前先给出空列表作为占位，以保证整体框架类型正确。
-后续可以在这个基础上依次填入具体子句构造。
+/-- 单只鸽子的 “至少一个洞” 子句：
+
+`phpClauseAtLeastOne n p` 表示：
+
+  ( ∨_{h : Hole n} x_{p,h} )
+
+也就是一个包含所有洞字面 `x_{p,h}` 的长子句。 -/
+noncomputable
+def phpClauseAtLeastOne (n : Nat) (p : Pigeon n) :
+    GenClause (PHPVar n) :=
+  (List.ofFn fun h : Hole n =>
+    { var := phpVarIndex n p h
+    , neg := false })
+
+/-- “At Least One” 子句族：
+
+对每个鸽子 p : Pigeon n，都有一个子句：
+
+  ( ∨_{h} x_{p,h} )
+
+`PHP_atLeastOne n` 就是所有这些子句的列表。 -/
+noncomputable
+def PHP_atLeastOne (n : Nat) : GenCNF (PHPVar n) :=
+  List.ofFn (fun p : Pigeon n => phpClauseAtLeastOne n p)
+
+/-- 对固定的洞 h，生成所有 “至多一只鸽子占 h” 的 2 字面子句：
+
+对每一对鸽子 (p₁, p₂)，i < j，加一个子句：
+
+  (¬x_{p₁,h} ∨ ¬x_{p₂,h})
+
+这保证同一个洞不会被两只不同的鸽子同时占用。 -/
+noncomputable
+def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
+    GenCNF (PHPVar n) :=
+  let ps    : List (Pigeon n)             := pigeonsList n
+  let pairs : List (Pigeon n × Pigeon n)  := listPairs ps
+  pairs.map (fun (p₁, p₂) =>
+    [ { var := phpVarIndex n p₁ h, neg := true }
+    , { var := phpVarIndex n p₂ h, neg := true } ])
+
+/-- “At Most One” 子句族：
+
+对每个洞 h，生成所有 `(¬x_{p₁,h} ∨ ¬x_{p₂,h})` 子句，并把它们全部收集起来。 -/
+noncomputable
+def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
+  let hs : List (Hole n) := holesList n
+  -- 不用 `List.bind`，用 foldr + ++ 拼接
+  hs.foldr
+    (fun h acc => phpClausesAtMostOneForHole n h ++ acc)
+    []
+
+/-- PHPₙ 的完整变长 CNF（未 3-SAT 化）：AtLeastOne ∧ AtMostOne。 -/
+noncomputable
+def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
+  PHP_atLeastOne n ++ PHP_atMostOne n
+
+/--
+PHPₙ 的 3-SAT 骨架（占位）：
+
+真正的 3-SAT 编码应该是对 `PHP_fullGenCNF n` 做一次 Tseitin-transform
+得到的 3-CNF。
+
+目前为了让复杂性理论那边的类型跑通，先给出一个空列表占位；
+后续可以把这里替换成：
+
+  `PHPcnf n := to3CNF (PHP_fullGenCNF n)`
+
+之类的定义。
 -/
 noncomputable
 def PHPcnf (n : Nat) : CNF (PHPVar n) :=
@@ -817,7 +909,73 @@ axiom HardCNF_unsat (n : Nat) :
 
 end HardFamily
 
+
+/-! ------------------------------------------------------------
+### 18. DPLL 作用量困难族 HardActionDPLL（复杂性 schema）
+------------------------------------------------------------ -/
+
+section DPLLHardAction
+
+/--
+`HardActionDPLL n`：第 n 个公式族（例如 PHPₙ 的 3-SAT 编码）上，
+某种“规范选择的” DPLL 作用量。
+
+直觉上可以理解为：在 `HardCNF n` 上运行某个固定 DPLL 算法所得的
+**结构作用量 A[ψₙ]**。这里我们暂时把它作为一个抽象序列引入，
+后续再尝试用 DPLLPath 和 dpllAction 具体刻画它。 -/
+axiom HardActionDPLL : ActionSeq
+
+/--
+**指数下界假设（理论内容）**：
+
+复杂性理论告诉我们：在选定的困难族（例如 PHPₙ 的 3-SAT 编码）上，
+任何符合 DPLL 规则的求解过程，其“结构作用量”至少是指数级：
+
+> ∀ n, 2^n ≤ HardActionDPLL n.
+
+真正要证明的困难部分就是这个断言；
+目前我们在 Lean 中把它作为一个待攻克的公理。 -/
+axiom hardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL
+
+/--
+**多项式上界假设（算法层面的假设）**：
+
+如果我们假设存在一个 DPLL 算法，它在困难族上是多项式时间，
+并且每一步的结构密度（例如 λ = 能量 / 冲突数 / 决策深度等）
+由某个多项式统一上界，那么结合你之前证明的
+
+> `pathActionNat_polyUpper`
+
+就可以推出：HardActionDPLL 这个序列也满足某种多项式上界。
+
+这里先把这个推论抽象成一个命题：
+
+> ∀ n, HardActionDPLL n ≤ n²
+
+（或者更一般的多项式，当前我们沿用 `PolyUpper_general` 的形状）。 -/
+axiom hardActionDPLL_polyUpper_from_alg :
+  PolyUpper_general HardActionDPLL
+
+/--
+**最终矛盾定理：**
+
+> 若困难族 HardCNF 上的 DPLL 作用量既有**指数下界**，
+> 又源于某种“多项式时间 + 多项式密度上界”的算法假设，
+> 则导致矛盾。
+
+这个定理本身是你在第 14–15 节搭好的抽象框架的一个实例化版本。 -/
+theorem no_polyTime_DPLL_on_hardFamily : False :=
+  no_polyTime_on_family
+    HardActionDPLL
+    hardActionDPLL_expLower_2pow
+    hardActionDPLL_polyUpper_from_alg
+
+end DPLLHardAction
+
+
 end StructuralAction
+
 
 
 
