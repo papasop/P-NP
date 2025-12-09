@@ -431,6 +431,51 @@ def pathActionNat
   (Finset.univ : Finset (Fin (ψ.T + 1))).sum
     (fun t => density (ψ.states t))
 
+/-- 抽象的“每步密度在非终止步上至少为 1 ⇒ 作用量下界时间步数”的定理。
+
+设有算法模型 A、公式 Φ、一条轨迹 ψ 以及密度函数 density。
+若在 ψ 的前 T 步（也就是索引 `t.val < ψ.T` 的那些状态）上，我们都有
+`density (ψ.states t) ≥ 1`，则总时间步数 `ψ.T` 受到作用量的下界控制：
+
+`ψ.T ≤ pathActionNat A Φ density ψ`.
+
+这个引理是把“时间下界”搬运到“作用量下界”的关键桥梁。
+
+> 当前版本仅给出精确的形式化接口，证明留作后续工作。
+-/
+lemma pathActionNat_ge_time
+    {n : ℕ} (A : AlgorithmModel n) (Φ : CNF n)
+    (density : A.StateType → ℕ)
+    (ψ : ComputationPath A Φ)
+    (hPos : ∀ t : Fin (ψ.T + 1),
+      t.1 < ψ.T → 1 ≤ density (ψ.states t)) :
+    ψ.T ≤ pathActionNat A Φ density ψ := by
+  classical
+  /-
+  思路（将来可用于填充证明）：
+
+  1. 记 `k := ψ.T`，并考虑函数
+       f : Fin (k+1) → ℕ := fun t => density (ψ.states t)
+
+  2. 在 Fin (k+1) 上，对所有满足 t.val < k 的索引，假设有：
+       1 ≤ f t
+     这是由 hPos 直接给出的。
+
+  3. 证明一个纯组合引理：
+       lemma sum_fin_ge_of_prefix_ge_one
+         (k : ℕ) (f : Fin (k+1) → ℕ)
+         (h : ∀ t, t.val < k → 1 ≤ f t) :
+         k ≤ ∑ t, f t
+
+     再把它套用到当前的 f 即可得到结论。
+
+  4. 这个纯组合引理可以对 k 做归纳，用
+       Fin.sum_univ_succ
+     把 ∑ over Fin (k+2) 拆成 f 0 加上 ∑ over Fin (k+1) (with succ 索引)，
+     再利用归纳假设和 hPos 对应的 1 ≤ f t。
+  -/
+  sorry
+
 /-- 抽象的“每步能量有界 + 时间多项式有界 ⇒ 作用量多项式有界”定理（自然数版本）。 -/
 lemma pathActionNat_polyUpper
     {n : ℕ} (A : AlgorithmModel n)
@@ -463,6 +508,7 @@ lemma pathActionNat_polyUpper
     (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
       =
     (ψ.T + 1) * C := by
+    -- 先用 sum_const_nat 得到 card * C
     have h0 :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
         =
@@ -471,6 +517,7 @@ lemma pathActionNat_polyUpper
         (Finset.sum_const_nat
           (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
           (b := C))
+    -- 再用 card_univ = ψ.T + 1
     have h_card :
       (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
       simpa [Finset.card_univ, Fintype.card_fin]
@@ -492,19 +539,31 @@ lemma pathActionNat_polyUpper
     _ = (ψ.T + 1) * C := h_sum_const
     _ ≤ (P n + 1) * C := hT_mul
 
-/-- DPLL 的结构作用量（Nat）：定义为 pathActionNat 的特例。 -/
+/-- 通用版：给定任意密度函数，DPLL 的结构作用量。 -/
+noncomputable
+def dpllActionWith {n : Nat} (Φ : CNF n)
+    (density : DPLLState n → Nat)
+    (ψ : DPLLPath n Φ) : Nat :=
+  pathActionNat (A := DPLLModel n) Φ density ψ
+
+/-- 通用版：给定任意密度函数，CDCL 的结构作用量。 -/
+noncomputable
+def cdclActionWith {n : Nat} (Φ : CNF n)
+    (density : CDCLState n → Nat)
+    (ψ : CDCLPath n Φ) : Nat :=
+  pathActionNat (A := CDCLModel n) Φ density ψ
+
+/-- DPLL 的结构作用量（Nat）：用能量作为密度。 -/
 noncomputable
 def dpllAction {n : Nat} (Φ : CNF n)
     (ψ : DPLLPath n Φ) : Nat :=
-  pathActionNat (A := DPLLModel n) Φ
-    (fun s => dpllStructuralDensity s) ψ
+  dpllActionWith Φ (fun s => dpllStructuralDensity s) ψ
 
-/-- CDCL 的结构作用量（Nat）：定义为 pathActionNat 的特例。 -/
+/-- CDCL 的结构作用量（Nat）：用能量作为密度。 -/
 noncomputable
 def cdclAction {n : Nat} (Φ : CNF n)
     (ψ : CDCLPath n Φ) : Nat :=
-  pathActionNat (A := CDCLModel n) Φ
-    (fun s => cdclStructuralDensity s) ψ
+  cdclActionWith Φ (fun s => cdclStructuralDensity s) ψ
 
 /-- DPLL 版的多项式上界：  
     如果每步结构密度有界且时间 T 多项式有界，则 dpllAction 也多项式有界。 -/
@@ -529,7 +588,7 @@ lemma dpllAction_polyUpper
         intro Φ' ψ'
         exact hP Φ' ψ')
       Φ ψ
-  simpa [dpllAction] using h
+  simpa [dpllAction, dpllActionWith] using h
 
 /-- CDCL 版的多项式上界：  
     如果每步结构密度有界且时间 T 多项式有界，则 cdclAction 也多项式有界。 -/
@@ -554,7 +613,7 @@ lemma cdclAction_polyUpper
         intro Φ' ψ'
         exact hP Φ' ψ')
       Φ ψ
-  simpa [cdclAction] using h
+  simpa [cdclAction, cdclActionWith] using h
 
 end NatActionUpper
 
@@ -629,6 +688,7 @@ theorem no_polyTime_on_family
   expLower_2pow_not_PolyUpper_general A hLower hUpper
 
 end StructuralAction
+
 
 
 
