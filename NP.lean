@@ -48,7 +48,8 @@ def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
 /-- 能量：未满足子句数量（递归版） -/
 def energy {n : Nat} : CNF n → Assignment n → Nat
   | [],      _ => 0
-  | C :: Φ,  σ => energy Φ σ + (if clauseEval σ C then 0 else 1)
+  | C :: Φ,  σ =>
+      energy Φ σ + (if clauseEval σ C = true then 0 else 1)
 
 /-- 辅助引理：`cnfEval = true` 当且仅当 `energy = 0`。 -/
 lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
@@ -59,8 +60,11 @@ lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   | cons C Φ ih =>
       classical
       -- 对当前子句的布尔值分类
-      cases hC : clauseEval σ C <;>
-        simp [cnfEval, energy, hC, ih]
+      by_cases hC : clauseEval σ C = true
+      · simp [cnfEval, energy, hC, ih]
+      · have hC' : clauseEval σ C = false := by
+          cases h' : clauseEval σ C <;> simp [h', hC] at *
+        simp [cnfEval, energy, hC, hC', ih]
 
 /-- 满足 ↔ 能量为 0（真正证明版） -/
 lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
@@ -427,18 +431,77 @@ def pathActionNat
   (Finset.univ : Finset (Fin (ψ.T + 1))).sum
     (fun t => density (ψ.states t))
 
-/-- 抽象的“每步密度在非终止步上至少为 1 ⇒ 作用量下界时间步数”的定理。
+/-- 纯组合引理：
 
-设有算法模型 A、公式 Φ、一条轨迹 ψ 以及密度函数 density。
-若在 ψ 的前 T 步（也就是索引 `t.val < ψ.T` 的那些状态）上，我们都有
-`density (ψ.states t) ≥ 1`，则总时间步数 `ψ.T` 受到作用量的下界控制：
+若对所有 `t : Fin (k+1)`，只要 `t.val < k` 就有 `f t ≥ 1`，
+则
+`k ≤ ∑_{t : Fin (k+1)} f t`.
 
-`ψ.T ≤ pathActionNat A Φ density ψ`.
+直观：前 k 个位置每个至少贡献 1，最后一个位置随便，于是总和 ≥ k。 -/
+lemma sum_fin_ge_of_prefix_ge_one
+    (k : ℕ) (f : Fin (k+1) → ℕ)
+    (h : ∀ t : Fin (k+1), t.1 < k → 1 ≤ f t) :
+    k ≤ ∑ t : Fin (k+1), f t := by
+  classical
+  revert f
+  induction' k with k ih <;> intro f h
+  · -- k = 0
+    simp
+  · -- k.succ
+    -- 定义尾部函数 g：丢掉第 0 个元素，从后面 k+1 个里看
+    let g : Fin (k+1) → ℕ := fun i => f i.succ
 
-这个引理是把“时间下界”搬运到“作用量下界”的关键桥梁。
+    -- 证明 g 也满足“前缀 ≥ 1”的性质（界限是 k）
+    have hg : ∀ i : Fin (k+1), i.1 < k → 1 ≤ g i := by
+      intro i hi
+      have hi' : (i.succ : Fin (k.succ + 1)).1 < k.succ := by
+        -- i.succ.val = i.val.succ
+        -- hi : i.val < k ⇒ i.val.succ < k.succ
+        simpa [Fin.succ] using Nat.succ_lt_succ hi
+      have h' := h (i.succ) hi'
+      simpa [g] using h'
 
-> 当前版本仅给出精确的形式化接口，证明留作后续工作。
--/
+    -- 用归纳假设作用在 g 上：得到尾部和 ≥ k
+    have h_tail : k ≤ ∑ i : Fin (k+1), g i :=
+      ih g hg
+
+    -- 头部项 f 0 也至少是 1
+    have h_head : 1 ≤ f 0 := by
+      have : (0 : ℕ) < k.succ := Nat.succ_pos _
+      have h' := h (0 : Fin (k.succ + 1)) this
+      simpa using h'
+
+    -- 利用 Fin.sum_univ_succ 把总和拆成“头 + 尾”
+    have hsum :
+      (∑ t : Fin (k.succ + 1), f t)
+        = f 0 + ∑ i : Fin (k+1), g i := by
+      -- Fin.sum_univ_succ : ∑ i : Fin (n+1), f i = f 0 + ∑ i : Fin n, f i.succ
+      -- 此处 n := k.succ，域 Fin (k.succ+1) = Fin (k+1+1)
+      simpa [g, Nat.succ_eq_add_one] using
+        (Fin.sum_univ_succ (f := f))
+
+    -- 利用 1 ≤ f 0 和 k ≤ ∑ g i 推出 k.succ ≤ f 0 + ∑ g i
+    have hk :
+        k.succ ≤ f 0 + ∑ i : Fin (k+1), g i := by
+      -- 1 + k ≤ f0 + tail
+      have := Nat.add_le_add h_head h_tail
+      -- 左边：1 + k = k.succ
+      -- 右边：f 0 + ∑ g i
+      simpa [Nat.succ_eq_add_one, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using this
+
+    -- 代回总和 ∑ f t
+    -- 目标：k.succ ≤ ∑ t : Fin (k.succ+1), f t
+    -- 用 hsum 把右边换成 f 0 + ∑ g
+    simpa [hsum] using hk
+
+/-- 把上面的组合引理用于抽象作用量：
+
+假设沿着轨迹 ψ，在所有“非终止步” t（即 `t.val < ψ.T`）上，
+都有 `density (ψ.states t) ≥ 1`，则
+
+`ψ.T ≤ pathActionNat A Φ density ψ`。
+
+也就是：**时间步数 ≤ 作用量**。 -/
 lemma pathActionNat_ge_time
     {n : ℕ} (A : AlgorithmModel n) (Φ : CNF n)
     (density : A.StateType → ℕ)
@@ -447,8 +510,14 @@ lemma pathActionNat_ge_time
       t.1 < ψ.T → 1 ≤ density (ψ.states t)) :
     ψ.T ≤ pathActionNat A Φ density ψ := by
   classical
-  /- 证明留待后续填充 -/
-  sorry
+  have h :=
+    sum_fin_ge_of_prefix_ge_one
+      (k := ψ.T)
+      (f := fun t : Fin (ψ.T + 1) => density (ψ.states t))
+      (h := by
+        intro t ht
+        exact hPos t ht)
+  simpa [pathActionNat] using h
 
 /-- 抽象的“每步能量有界 + 时间多项式有界 ⇒ 作用量多项式有界”定理（自然数版本）。 -/
 lemma pathActionNat_polyUpper
@@ -660,7 +729,7 @@ theorem no_polyTime_on_family
 
 
 /-! ------------------------------------------------------------
-### 16. 鸽笼原理 PHPₙ 的 CNF 族（骨架，最终版）
+### 16. 鸽笼原理 PHPₙ 的 CNF 族（骨架）
 ------------------------------------------------------------ -/
 
 section PigeonholeFamily
@@ -719,7 +788,37 @@ def PHPcnf (n : Nat) : CNF (PHPVar n) :=
 
 end PigeonholeFamily
 
+
+/-! ------------------------------------------------------------
+### 17. 抽象困难族 HardCNF，用 PHPₙ 作为候选
+------------------------------------------------------------ -/
+
+section HardFamily
+
+/-- 把 PHPₙ 视为复杂性理论中的“困难族” CNF。 -/
+noncomputable
+def HardCNF (n : Nat) : CNF (PHPVar n) :=
+  PHPcnf n
+
+/--
+占位性质：HardCNFₙ 是 UNSAT。
+
+真实情况里，这里应该是一个定理：
+
+> ∀ n ≥ 1, HardCNF n 是不可满足的。
+
+在目前阶段，我们先把它作为一个公理（axiom）引入，
+确保后续在定义“HardActionDPLL n”时可以假设：
+
+> 对任何赋值 σ，都有 `cnfEval σ (HardCNF n) = false`。 -/
+axiom HardCNF_unsat (n : Nat) :
+  ∀ σ : Assignment (PHPVar n),
+    cnfEval σ (HardCNF n) = false
+
+end HardFamily
+
 end StructuralAction
+
 
 
 
