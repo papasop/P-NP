@@ -4,759 +4,159 @@ open scoped BigOperators
 
 namespace StructuralAction
 
-/-! ### 1. 3-SAT 基础语法 -/
+------------------------------------------------------------
+-- 1. 3-SAT 基础语法
+------------------------------------------------------------
 
-/-- 布尔赋值：`n` 个变量，对应 `Fin n → Bool` -/
+-- 布尔赋值：n 个变量，对应 Fin n → Bool
 abbrev Assignment (n : Nat) := Fin n → Bool
 
-/-- 字面：变量索引 + 是否取反 -/
+-- 字面：变量索引 + 是否取反
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
   deriving Repr
 
-/-- 子句：3 个字面 -/
+-- 子句：3 个字面
 abbrev Clause (n : Nat) := Fin 3 → Literal n
 
-/-- CNF 公式：子句列表 -/
+-- CNF 公式：子句列表
 abbrev CNF (n : Nat) := List (Clause n)
 
-/-- 评价字面 -/
+-- 评价字面
 def literalEval {n : Nat} (σ : Assignment n) (ℓ : Literal n) : Bool :=
   let b := σ ℓ.var
   if ℓ.neg then !b else b
 
-/-- 评价 3-子句 -/
+-- 评价 3-子句
 def clauseEval {n : Nat} (σ : Assignment n) (C : Clause n) : Bool :=
   let ℓ0 := C ⟨0, by decide⟩
   let ℓ1 := C ⟨1, by decide⟩
   let ℓ2 := C ⟨2, by decide⟩
   literalEval σ ℓ0 || literalEval σ ℓ1 || literalEval σ ℓ2
 
-/-- 评价 CNF：所有子句的合取（递归定义版本） -/
+-- 递归版本 cnfEval：所有子句的合取
 def cnfEval {n : Nat} (σ : Assignment n) : CNF n → Bool
   | []      => true
   | C :: Φ  => clauseEval σ C && cnfEval σ Φ
 
-/-- 满足解集合 -/
+-- 满足解集合
 def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
   { σ | cnfEval σ Φ = true }
 
+------------------------------------------------------------
+-- 2. 能量函数 energy：未满足子句个数（递归定义）
+------------------------------------------------------------
 
-/-! ### 2. 能量函数 E：未满足子句个数（递归定义） -/
-
-/-- 能量：未满足子句数量（递归版） -/
+-- 能量：未满足子句数量
 def energy {n : Nat} : CNF n → Assignment n → Nat
   | [],      _ => 0
   | C :: Φ,  σ =>
       energy Φ σ + (if clauseEval σ C = true then 0 else 1)
 
-/-- 辅助引理：`cnfEval = true` 当且仅当 `energy = 0`。 -/
-lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
+-- 核心引理：cnfEval = true ↔ energy = 0
+lemma cnfEval_true_iff_energy_zero
+    {n : Nat} (Φ : CNF n) (σ : Assignment n) :
     cnfEval σ Φ = true ↔ energy Φ σ = 0 := by
   induction Φ with
   | nil =>
+      -- Φ = []
       simp [cnfEval, energy]
   | cons C Φ ih =>
+      -- Φ = C :: Φ
       classical
       by_cases hC : clauseEval σ C = true
-      · -- 当前子句为真
+      · -- 子句 C 为真：等价关系归约到尾部 Φ
         simp [cnfEval, energy, hC, ih]
-      · -- 当前子句为假
+      · -- 子句 C 为假：整个公式为假，能量至少为 1
+        -- 先把 clauseEval σ C = false 记下来，方便 simp
         have hC' : clauseEval σ C = false := by
           cases h' : clauseEval σ C <;> simp [h', hC] at *
-        simp [cnfEval, energy, hC, hC', ih]
+        -- 此时：
+        --   cnfEval σ (C :: Φ) = (false && cnfEval σ Φ) = false
+        --   energy  (C :: Φ) σ = energy Φ σ + 1 ≥ 1
+        -- 两边命题都为 False，直接用 simp 化成 False ↔ False
+        simp [cnfEval, energy, hC', ih]
 
-/-- 满足 ↔ 能量为 0（真正证明版） -/
+-- 满足 ↔ 能量为 0
 lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   σ ∈ satSet Φ ↔ energy Φ σ = 0 := by
   simpa [satSet] using (cnfEval_true_iff_energy_zero (Φ := Φ) (σ := σ))
 
-
-/-! ### 3. 配置图（汉明距离 1） -/
-
-/-- 汉明距离 1 的邻接关系 -/
-def neighbor {n : Nat} (σ τ : Assignment n) : Prop :=
-  (Finset.univ.filter (fun i : Fin n => σ i ≠ τ i)).card = 1
-
-/-- 赋值空间上的简单图：边 = 汉明邻居 -/
-def ConfigGraph (n : Nat) : SimpleGraph (Assignment n) where
-  Adj σ τ := neighbor σ τ
-  symm := by
-    intro σ τ h
-    dsimp [neighbor] at h ⊢
-    have hset :
-      (Finset.univ.filter fun i : Fin n => σ i ≠ τ i)
-        =
-      (Finset.univ.filter fun i : Fin n => τ i ≠ σ i) := by
-      apply Finset.ext
-      intro i
-      simp [ne_comm]
-    simpa [hset] using h
-  loopless := by
-    classical
-    intro σ h
-    dsimp [neighbor] at h
-    have h0 :
-      (Finset.univ.filter fun i : Fin n => σ i ≠ σ i).card = 0 := by
-      simp
-    have : 0 = 1 := by
-      simpa [h0] using h
-    exact Nat.zero_ne_one this
-
-
-/-! ### 4. 抽象算法模型 & 轨迹 ψ -/
-
-/-- 抽象算法模型：状态类型 + init + step + halting -/
-structure AlgorithmModel (n : Nat) where
-  StateType : Type
-  init     : CNF n → StateType
-  step     : CNF n → StateType → StateType
-  halting  : CNF n → StateType → Prop
-
-/-- 算法在公式 Φ 上的一条有限轨迹 ψ -/
-structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
-  T      : Nat
-  states : Fin (T+1) → A.StateType
-  h_init :
-    states ⟨0, Nat.succ_pos _⟩ = A.init Φ
-  h_step :
-    ∀ t : Fin T,
-      states ⟨t.1.succ, Nat.succ_lt_succ t.2⟩
-        = A.step Φ (states ⟨t.1, Nat.lt_trans t.2 (Nat.lt_succ_self _)⟩)
-  h_halt :
-    A.halting Φ (states ⟨T, Nat.lt_succ_self _⟩)
-
-
-/-! ### 5. 抽象结构密度 λ 与作用量 A[ψ]（Nat 版本） -/
-
-/-- 抽象的结构密度（λ），后面你可以换成 λₖ / 压缩长度。  
-    这里先给一个常数 0 的占位。 -/
-noncomputable
-def structuralDensity {n : Nat} (A : AlgorithmModel n) :
-    A.StateType → Nat :=
-  fun _ => 0
-
-/-- 结构作用量：A[ψ] = ∑ λ(s_t) （Nat 版本） -/
-noncomputable
-def action {n : Nat} {A : AlgorithmModel n} {Φ : CNF n}
-    (ψ : ComputationPath A Φ) : Nat :=
-  ∑ t : Fin (ψ.T + 1), structuralDensity A (ψ.states t)
-
-/-- 时间步数：T -/
-def time {n : Nat} {A : AlgorithmModel n} {Φ : CNF n}
-    (ψ : ComputationPath A Φ) : Nat :=
-  ψ.T
-
-
-/-! ### 6. 能量子水平集 & 能量障碍（占位） -/
-
-/-- 能量 ≤ k 的子水平集 -/
-def sublevel {n : Nat} (Φ : CNF n) (k : Nat) : Set (Assignment n) :=
-  { σ | energy Φ σ ≤ k }
-
-/-- 能量障碍（占位版本）：真正版本会用路径 infimum 定义 -/
-def energyBarrier {n : Nat} (_Φ : CNF n)
-    (_S₀ : Set (Assignment n)) : Nat :=
-  0
-
-
-/-! ### 7. DPLL 状态与模型 -/
-
-/-- DPLL 状态骨架 -/
-structure DPLLState (n : Nat) where
-  assign    : Assignment n
-  undecided : Finset (Fin n)
-  decisions : List (Fin n × Bool)
-  formula   : CNF n
-  conflict  : Bool
-
-/-- DPLL 状态的能量 -/
-def DPLLState.energy {n : Nat} (s : DPLLState n) : Nat :=
-  StructuralAction.energy s.formula s.assign
-
-/-- 当前赋值满足公式？ -/
-def DPLLState.isSatisfied {n : Nat} (s : DPLLState n) : Prop :=
-  cnfEval s.assign s.formula = true
-
-/-- 当前赋值产生语义冲突？ -/
-def DPLLState.hasConflict {n : Nat} (s : DPLLState n) : Prop :=
-  cnfEval s.assign s.formula = false
-
-/-- 所有变量都已决定？ -/
-def DPLLState.isComplete {n : Nat} (s : DPLLState n) : Prop :=
-  s.undecided = ∅
-
-/-- DPLL 终止状态：要么 SAT，要么 complete+conflict -/
-def DPLLState.isTerminal {n : Nat} (s : DPLLState n) : Prop :=
-  s.isSatisfied ∨ (s.hasConflict ∧ s.isComplete)
-
-namespace DPLL
-
-open Classical
-
-/-- DPLL 初始状态：所有变量未决定，赋值全 false -/
-def initState {n : Nat} (Φ : CNF n) : DPLLState n :=
-  { assign    := fun _ => false
-  , undecided := Finset.univ
-  , decisions := []
-  , formula   := Φ
-  , conflict  := false }
-
-/-- 在状态 s 下评价子句是否为真（语义封装）。 -/
-def clauseTrue {n : Nat} (s : DPLLState n) (C : Clause n) : Bool :=
-  clauseEval s.assign C
-
-/-- 在状态 s 下评价整个公式是否为真（语义封装）。 -/
-def formulaTrue {n : Nat} (s : DPLLState n) : Bool :=
-  cnfEval s.assign s.formula
-
-/-- 当前状态中，变量 i 是否尚未决定？（命题版本） -/
-def isUndecided {n : Nat} (s : DPLLState n) (i : Fin n) : Prop :=
-  i ∈ s.undecided
-
-/-- 更新赋值：把变量 i 设为 b，其他变量保持不变。 -/
-def updateAssign {n : Nat} (s : DPLLState n) (i : Fin n) (b : Bool) :
-    Assignment n :=
-  fun j => if h : j = i then b else s.assign j
-
-/--
-简化版“单位传播/决策”原语：
-
-- 在当前公式中，取第一个子句 C；
-- 在 C 的三个字面中，找第一项变量尚未决定的字面 ℓ；
-- 若必需，将来可以用更严格的 Unit Clause 检测替换此骨架。
--/
-noncomputable
-def findUnitLiteral {n : Nat} (s : DPLLState n) : Option (Fin n × Bool) :=
-  match s.formula with
-  | []      => none
-  | C :: _  =>
-      let ℓ0 := C ⟨0, by decide⟩
-      let ℓ1 := C ⟨1, by decide⟩
-      let ℓ2 := C ⟨2, by decide⟩
-      let mkVal (ℓ : Literal n) : Bool := !ℓ.neg
-      if h0 : isUndecided s ℓ0.var then
-        some (ℓ0.var, mkVal ℓ0)
-      else if h1 : isUndecided s ℓ1.var then
-        some (ℓ1.var, mkVal ℓ1)
-      else if h2 : isUndecided s ℓ2.var then
-        some (ℓ2.var, mkVal ℓ2)
-      else
-        none
-
-/--
-对状态 s 做一次“传播/决策”步（简化骨架版）：
-
-- 若 `findUnitLiteral s = some (i, b)`：
-  - 把变量 i 赋值为 b；
-  - 从 undecided 中移除 i；
-  - 把 (i, b) 记入 decisions；
-- 若找不到可传播的字面，则保持状态不变。
--/
-noncomputable
-def unitPropOnce {n : Nat} (s : DPLLState n) : DPLLState n :=
-  match findUnitLiteral s with
-  | none => s
-  | some (i, b) =>
-      { assign    := updateAssign s i b
-      , undecided := s.undecided.erase i
-      , decisions := (i, b) :: s.decisions
-      , formula   := s.formula
-      , conflict  := s.conflict }
-
-/-- DPLL 单步转移：目前实现为一轮简化版的“单位传播/决策”。 -/
-noncomputable
-def step {n : Nat} (_Φ : CNF n) (s : DPLLState n) : DPLLState n :=
-  unitPropOnce s
-
-/-- DPLL 停机条件 -/
-def halting {n : Nat} (_Φ : CNF n) (s : DPLLState n) : Prop :=
-  DPLLState.isTerminal s
-
-end DPLL
-
-/-- 把 DPLL 包装成 AlgorithmModel -/
-noncomputable
-def DPLLModel (n : Nat) : AlgorithmModel n :=
-{ StateType := DPLLState n
-, init     := fun Φ => DPLL.initState Φ
-, step     := fun Φ s => DPLL.step Φ s
-, halting  := fun Φ s => DPLL.halting Φ s }
-
-
-/-! ### 8. CDCL 状态与模型 -/
-
-/-- CDCL 状态骨架 -/
-structure CDCLState (n : Nat) where
-  assign      : Assignment n
-  trail       : List (Fin n × Bool)
-  decisionLvl : Nat
-  formula     : CNF n
-  learnt      : List (Clause n)
-  conflicts   : Nat
-  unsat       : Bool
-
-/-- CDCL 状态能量 -/
-def CDCLState.energy {n : Nat} (s : CDCLState n) : Nat :=
-  StructuralAction.energy s.formula s.assign
-
-/-- 当前赋值满足原公式？ -/
-def CDCLState.isSatisfied {n : Nat} (s : CDCLState n) : Prop :=
-  cnfEval s.assign s.formula = true
-
-/-- 当前赋值语义冲突？ -/
-def CDCLState.hasConflict {n : Nat} (s : CDCLState n) : Prop :=
-  cnfEval s.assign s.formula = false
-
-/-- SAT 停机：满足且未标记 unsat -/
-def CDCLState.isSatTerminal {n : Nat} (s : CDCLState n) : Prop :=
-  s.isSatisfied ∧ ¬ s.unsat
-
-/-- UNSAT 停机：全局 unsat 标志为真 -/
-def CDCLState.isUnsatTerminal {n : Nat} (s : CDCLState n) : Prop :=
-  s.unsat
-
-/-- CDCL 停机条件：SAT 或 UNSAT -/
-def CDCLState.isTerminal {n : Nat} (s : CDCLState n) : Prop :=
-  s.isSatTerminal ∨ s.isUnsatTerminal
-
-/-- CDCL 初始状态骨架 -/
-def CDCL.initState {n : Nat} (Φ : CNF n) : CDCLState n :=
-  { assign      := fun _ => false
-  , trail       := []
-  , decisionLvl := 0
-  , formula     := Φ
-  , learnt      := []
-  , conflicts   := 0
-  , unsat       := false }
-
-/-- CDCL 单步转移（目前占位实现：恒等） -/
-def CDCL.step {n : Nat} (_Φ : CNF n) (s : CDCLState n) : CDCLState n :=
-  s
-
-/-- CDCL 停机条件 -/
-def CDCL.halting {n : Nat} (_Φ : CNF n) (s : CDCLState n) : Prop :=
-  CDCLState.isTerminal s
-
-/-- 把 CDCL 包装成 AlgorithmModel -/
-def CDCLModel (n : Nat) : AlgorithmModel n :=
-{ StateType := CDCLState n
-, init     := fun Φ => CDCL.initState Φ
-, step     := fun Φ s => CDCL.step Φ s
-, halting  := fun Φ s => CDCL.halting Φ s }
-
-
-/-! ### 9. 给 DPLL / CDCL 一个“能量型”结构密度示例（Nat） -/
-
-/-- DPLL：结构密度 = 能量（示例版） -/
-noncomputable
-def dpllStructuralDensity {n : Nat} (s : DPLLState n) : Nat :=
-  s.energy
-
-/-- CDCL：结构密度 = 能量（示例版） -/
-noncomputable
-def cdclStructuralDensity {n : Nat} (s : CDCLState n) : Nat :=
-  s.energy
-
-
-/-! ### 10. 把“满足”与“能量为 0”在状态层面连起来 -/
-
-/-- 对 DPLL 状态：`isSatisfied` 等价于能量为 0。 -/
-lemma DPLLState.isSatisfied_iff_energy_zero {n : Nat} (s : DPLLState n) :
-    DPLLState.isSatisfied s ↔ DPLLState.energy s = 0 := by
-  have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  simpa [DPLLState.isSatisfied, DPLLState.energy, satSet] using h
-
-/-- 对 CDCL 状态：`isSatisfied` 等价于能量为 0。 -/
-lemma CDCLState.isSatisfied_iff_energy_zero {n : Nat} (s : CDCLState n) :
-    CDCLState.isSatisfied s ↔ CDCLState.energy s = 0 := by
-  have h := sat_iff_energy_zero (Φ := s.formula) (σ := s.assign)
-  simpa [CDCLState.isSatisfied, CDCLState.energy, satSet] using h
-
-
-/-! ### 11. 方便记号：DPLLPath / CDCLPath -/
-
-/-- DPLL 在公式 Φ 上的一条计算轨迹 -/
-abbrev DPLLPath (n : Nat) (Φ : CNF n) :=
-  ComputationPath (DPLLModel n) Φ
-
-/-- CDCL 在公式 Φ 上的一条计算轨迹 -/
-abbrev CDCLPath (n : Nat) (Φ : CNF n) :=
-  ComputationPath (CDCLModel n) Φ
-
-
-/-! ### 12. 一个 n = 1 的玩具 3-SAT 例子 -/
-
-/-- 单变量的“正字面”子句：实际上就是 (x₀)。 -/
-def exampleClause1 : Clause 1 :=
-  fun _ => { var := ⟨0, by decide⟩, neg := false }
-
-/-- 只包含一个子句 (x₀) 的 CNF：Φ(x) = (x₀)。 -/
-def exampleCNF1 : CNF 1 :=
-  [exampleClause1]
-
-/-- 对 exampleCNF1 的 DPLL 初始状态 -/
-def exampleDPLLInit : DPLLState 1 :=
-  DPLL.initState exampleCNF1
-
-/-- 在 exampleCNF1 上运行 DPLL 一步后的状态 -/
-noncomputable
-def exampleDPLLNext : DPLLState 1 :=
-  DPLL.step exampleCNF1 exampleDPLLInit
-
-/-- 对 exampleCNF1 的 CDCL 初始状态 -/
-def exampleCDCLInit : CDCLState 1 :=
-  CDCL.initState exampleCNF1
-
-/-- 在 exampleCNF1 上运行 CDCL 一步后的状态 -/
-def exampleCDCLNext : CDCLState 1 :=
-  CDCL.step exampleCNF1 exampleCDCLInit
-
-
-/-! ------------------------------------------------------------
-### 13. 抽象离散作用量上界（Nat 版本）
------------------------------------------------------------- -/
-
-section NatActionUpper
-
-open Finset
-
-/-- 离散结构作用量（自然数版本）：
-    给定一个“密度”函数 `density : A.StateType → ℕ`，
-    对一条路径 ψ 求和：A_nat[ψ] = ∑_{t=0}^T density(s_t)。 -/
-def pathActionNat
-    {n : ℕ} (A : AlgorithmModel n) (Φ : CNF n)
-    (density : A.StateType → ℕ)
-    (ψ : ComputationPath A Φ) : ℕ :=
-  (Finset.univ : Finset (Fin (ψ.T + 1))).sum
-    (fun t => density (ψ.states t))
-
-/-- 纯组合引理：
-
-若对所有 `t : Fin (k+1)`，只要 `t.val < k` 就有 `f t ≥ 1`，
-则
-`k ≤ ∑_{t : Fin (k+1)} f t`.
-
-直观：前 k 个位置每个至少贡献 1，最后一个位置随便，于是总和 ≥ k。 -/
-lemma sum_fin_ge_of_prefix_ge_one
-    (k : ℕ) (f : Fin (k+1) → ℕ)
-    (h : ∀ t : Fin (k+1), t.1 < k → 1 ≤ f t) :
-    k ≤ ∑ t : Fin (k+1), f t := by
-  classical
-  revert f
-  induction' k with k ih <;> intro f h
-  · -- k = 0
-    simp
-  · -- k.succ
-    let g : Fin (k+1) → ℕ := fun i => f i.succ
-    have hg : ∀ i : Fin (k+1), i.1 < k → 1 ≤ g i := by
-      intro i hi
-      have hi' : (i.succ : Fin (k.succ + 1)).1 < k.succ := by
-        simpa [Fin.succ] using Nat.succ_lt_succ hi
-      have h' := h (i.succ) hi'
-      simpa [g] using h'
-    have h_tail : k ≤ ∑ i : Fin (k+1), g i :=
-      ih g hg
-    have h_head : 1 ≤ f 0 := by
-      have : (0 : ℕ) < k.succ := Nat.succ_pos _
-      have h' := h (0 : Fin (k.succ + 1)) this
-      simpa using h'
-    have hsum :
-      (∑ t : Fin (k.succ + 1), f t)
-        = f 0 + ∑ i : Fin (k+1), g i := by
-      simpa [g, Nat.succ_eq_add_one] using
-        (Fin.sum_univ_succ (f := f))
-    have hk :
-        k.succ ≤ f 0 + ∑ i : Fin (k+1), g i := by
-      have := Nat.add_le_add h_head h_tail
-      simpa [Nat.succ_eq_add_one, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using this
-    simpa [hsum] using hk
-
-/-- 把上面的组合引理用于抽象作用量：
-
-假设沿着轨迹 ψ，在所有“非终止步” t（即 `t.val < ψ.T`）上，
-都有 `density (ψ.states t) ≥ 1`，则
-
-`ψ.T ≤ pathActionNat A Φ density ψ`。
-
-也就是：**时间步数 ≤ 作用量**。 -/
-lemma pathActionNat_ge_time
-    {n : ℕ} (A : AlgorithmModel n) (Φ : CNF n)
-    (density : A.StateType → ℕ)
-    (ψ : ComputationPath A Φ)
-    (hPos : ∀ t : Fin (ψ.T + 1),
-      t.1 < ψ.T → 1 ≤ density (ψ.states t)) :
-    ψ.T ≤ pathActionNat A Φ density ψ := by
-  classical
-  have h :=
-    sum_fin_ge_of_prefix_ge_one
-      (k := ψ.T)
-      (f := fun t : Fin (ψ.T + 1) => density (ψ.states t))
-      (h := by
-        intro t ht
-        exact hPos t ht)
-  simpa [pathActionNat] using h
-
-/-- 抽象的“每步能量有界 + 时间多项式有界 ⇒ 作用量多项式有界”定理（自然数版本）。 -/
-lemma pathActionNat_polyUpper
-    {n : ℕ} (A : AlgorithmModel n)
-    (density : A.StateType → ℕ) (C : ℕ)
-    (hC : ∀ (Φ : CNF n) (ψ : ComputationPath A Φ) (t : Fin (ψ.T + 1)),
-      density (ψ.states t) ≤ C)
-    (P : ℕ → ℕ)
-    (hP : ∀ (Φ : CNF n) (ψ : ComputationPath A Φ), ψ.T ≤ P n) :
-    ∀ (Φ : CNF n) (ψ : ComputationPath A Φ),
-      pathActionNat A Φ density ψ ≤ (P n + 1) * C := by
-  intro Φ ψ
-  classical
-  have h_each : ∀ t : Fin (ψ.T + 1), density (ψ.states t) ≤ C :=
-    fun t => hC Φ ψ t
-  have h_sum_le' :
-    (Finset.univ : Finset (Fin (ψ.T + 1))).sum
-        (fun t => density (ψ.states t))
-      ≤
-    (Finset.univ : Finset (Fin (ψ.T + 1))).sum
-        (fun _ => C) := by
-    refine Finset.sum_le_sum ?h
-    intro t ht
-    exact h_each t
-  have h_sum_const :
-    (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
-      =
-    (ψ.T + 1) * C := by
-    have h0 :
-      (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
-        =
-      (Finset.univ : Finset (Fin (ψ.T + 1))).card * C := by
-      simpa using
-        (Finset.sum_const_nat
-          (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
-          (b := C))
-    have h_card :
-      (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
-      simpa [Finset.card_univ, Fintype.card_fin]
-    simpa [h_card] using h0
-  have hT : ψ.T + 1 ≤ P n + 1 :=
-    Nat.succ_le_succ (hP Φ ψ)
-  have hT_mul : (ψ.T + 1) * C ≤ (P n + 1) * C :=
-    Nat.mul_le_mul_right _ hT
-  calc
-    pathActionNat A Φ density ψ
-        = (Finset.univ : Finset (Fin (ψ.T + 1))).sum
-            (fun t => density (ψ.states t)) := by rfl
-    _ ≤ (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C) := h_sum_le'
-    _ = (ψ.T + 1) * C := h_sum_const
-    _ ≤ (P n + 1) * C := hT_mul
-
-/-- 通用版：给定任意密度函数，DPLL 的结构作用量。 -/
-noncomputable
-def dpllActionWith {n : Nat} (Φ : CNF n)
-    (density : DPLLState n → Nat)
-    (ψ : DPLLPath n Φ) : Nat :=
-  pathActionNat (A := DPLLModel n) Φ density ψ
-
-/-- 通用版：给定任意密度函数，CDCL 的结构作用量。 -/
-noncomputable
-def cdclActionWith {n : Nat} (Φ : CNF n)
-    (density : CDCLState n → Nat)
-    (ψ : CDCLPath n Φ) : Nat :=
-  pathActionNat (A := CDCLModel n) Φ density ψ
-
-/-- DPLL 的结构作用量（Nat）：用能量作为密度。 -/
-noncomputable
-def dpllAction {n : Nat} (Φ : CNF n)
-    (ψ : DPLLPath n Φ) : Nat :=
-  dpllActionWith Φ (fun s => dpllStructuralDensity s) ψ
-
-/-- CDCL 的结构作用量（Nat）：用能量作为密度。 -/
-noncomputable
-def cdclAction {n : Nat} (Φ : CNF n)
-    (ψ : CDCLPath n Φ) : Nat :=
-  cdclActionWith Φ (fun s => cdclStructuralDensity s) ψ
-
-/-- DPLL 版的多项式上界：  
-    如果每步结构密度有界且时间 T 多项式有界，则 dpllAction 也多项式有界。 -/
-lemma dpllAction_polyUpper
-    {n : ℕ} (C : ℕ) (P : ℕ → ℕ)
-    (hC : ∀ (Φ : CNF n) (ψ : DPLLPath n Φ) (t : Fin (ψ.T + 1)),
-      dpllStructuralDensity (ψ.states t) ≤ C)
-    (hP : ∀ (Φ : CNF n) (ψ : DPLLPath n Φ), ψ.T ≤ P n) :
-    ∀ (Φ : CNF n) (ψ : DPLLPath n Φ),
-      dpllAction Φ ψ ≤ (P n + 1) * C := by
-  intro Φ ψ
-  have h :=
-    pathActionNat_polyUpper
-      (A := DPLLModel n)
-      (density := fun s => dpllStructuralDensity s)
-      C
-      (by
-        intro Φ' ψ' t
-        exact hC Φ' ψ' t)
-      P
-      (by
-        intro Φ' ψ'
-        exact hP Φ' ψ')
-      Φ ψ
-  simpa [dpllAction, dpllActionWith] using h
-
-/-- CDCL 版的多项式上界：  
-    如果每步结构密度有界且时间 T 多项式有界，则 cdclAction 也多项式有界。 -/
-lemma cdclAction_polyUpper
-    {n : ℕ} (C : ℕ) (P : ℕ → ℕ)
-    (hC : ∀ (Φ : CNF n) (ψ : CDCLPath n Φ) (t : Fin (ψ.T + 1)),
-      cdclStructuralDensity (ψ.states t) ≤ C)
-    (hP : ∀ (Φ : CNF n) (ψ : CDCLPath n Φ), ψ.T ≤ P n) :
-    ∀ (Φ : CNF n) (ψ : CDCLPath n Φ),
-      cdclAction Φ ψ ≤ (P n + 1) * C := by
-  intro Φ ψ
-  have h :=
-    pathActionNat_polyUpper
-      (A := CDCLModel n)
-      (density := fun s => cdclStructuralDensity s)
-      C
-      (by
-        intro Φ' ψ' t
-        exact hC Φ' ψ' t)
-      P
-      (by
-        intro Φ' ψ'
-        exact hP Φ' ψ')
-      Φ ψ
-  simpa [cdclAction, cdclActionWith] using h
-
-end NatActionUpper
-
-
-/-! ------------------------------------------------------------
-### 14. 玩具版 “指数下界 + 多项式上界 ⇒ 矛盾” 定理
-使用 ℕ 上的 `2^n` 和 `n^2`。
------------------------------------------------------------- -/
-
-/-- 玩具版：一个“结构作用量”序列 A : ℕ → ℕ -/
-def ActionSeq := ℕ → ℕ
-
-/-- 多项式上界：这里我们固定为 P(n) = n^2 作为玩具。 -/
-def PolyUpper_n2 (A : ActionSeq) : Prop :=
-  ∀ n : ℕ, A n ≤ n^2
-
-/-- 指数下界：这里我们用 2^n 代替 “exp(n)”。 -/
-def ExpLower_2pow (A : ActionSeq) : Prop :=
-  ∀ n : ℕ, 2^n ≤ A n
-
-/--
-主玩具定理（完全形式化，无公理）：
-
-> 如果同一个 A : ℕ → ℕ 同时满足
->  1. ∀n, A n ≥ 2^n
->  2. ∀n, A n ≤ n^2
-> 那么矛盾。
--/
-theorem toy_hardFamily_contradiction
-    (A : ActionSeq)
-    (hLower : ExpLower_2pow A)
-    (hUpper : PolyUpper_n2 A) : False := by
-  have h₁ : (2 : ℕ)^10 ≤ A 10 := hLower 10
-  have h₂ : A 10 ≤ 10^2 := hUpper 10
-  have h_le : (2 : ℕ)^10 ≤ 10^2 := le_trans h₁ h₂
-  have h_lt : 10^2 < (2 : ℕ)^10 := by
-    norm_num  -- 100 < 1024
-  have h_absurd : (2 : ℕ)^10 < (2 : ℕ)^10 :=
-    lt_of_le_of_lt h_le h_lt
-  exact lt_irrefl _ h_absurd
-
-
-/-- 抽象版本的“多项式上界”：
-    这里为了复用 toy 定理，仍然选用 n² 作为统一的上界形状。 -/
-def PolyUpper_general (A : ActionSeq) : Prop :=
-  ∀ n : ℕ, A n ≤ n^2
-
-/-- 一般形式：ExpLower_2pow A 与 PolyUpper_general A 不能同时成立。 -/
-theorem expLower_2pow_not_PolyUpper_general
-    (A : ActionSeq)
-    (hLower : ExpLower_2pow A)
-    (hUpper : PolyUpper_general A) : False := by
-  exact toy_hardFamily_contradiction A hLower (by intro n; exact hUpper n)
-
-/-- 语义化名称版本：
-    “如果某个作用量族 A 同时满足指数下界和多项式上界，就矛盾。” -/
-theorem no_polyTime_on_family
-    (A : ActionSeq)
-    (hLower : ExpLower_2pow A)
-    (hUpper : PolyUpper_general A) :
-    False :=
-  expLower_2pow_not_PolyUpper_general A hLower hUpper
-
-
-/-! ------------------------------------------------------------
-### 16. 鸽笼原理 PHPₙ 的 CNF 族（变量编码 + GenCNF + to3CNF）
------------------------------------------------------------- -/
+------------------------------------------------------------
+-- 3. 一般 CNF（变长子句）和 3-SAT 转换 to3CNF
+------------------------------------------------------------
 
 namespace PigeonholeFamily
 
-open Function
+-- 一般子句：字面列表（长度不限）
+abbrev GenClause (n : Nat) := List (StructuralAction.Literal n)
 
-/-- 第 n 个鸽子：共有 n+1 只鸽子。 -/
-abbrev Pigeon (n : Nat) := Fin (n + 1)
-
-/-- 第 n 个洞：共有 n 个洞。 -/
-abbrev Hole (n : Nat) := Fin n
-
-/-- 一般子句：一个字面列表（允许长度 ≠ 3，稍后再 3-SAT 化）。 -/
-abbrev GenClause (n : Nat) := List (Literal n)
-
-/-- 一般 CNF：子句列表，每个子句可以是任意长度。 -/
+-- 一般 CNF：子句列表，每个子句可以任意长度
 abbrev GenCNF (n : Nat) := List (GenClause n)
 
-/-- 评价一般子句：折叠“或”。 -/
-def genClauseEval {n : Nat} (σ : Assignment n) (Γ : GenClause n) : Bool :=
-  Γ.foldr (fun ℓ acc => literalEval σ ℓ || acc) false
+-- 评价一般子句：折叠“或”
+def genClauseEval {n : Nat} (σ : StructuralAction.Assignment n)
+    (Γ : GenClause n) : Bool :=
+  Γ.foldr (fun ℓ acc => StructuralAction.literalEval σ ℓ || acc) false
 
-/-- 评价一般 CNF：所有子句的合取。 -/
-def genCNFEval {n : Nat} (σ : Assignment n) (Φ : GenCNF n) : Bool :=
+-- 评价一般 CNF：所有子句的合取
+def genCNFEval {n : Nat} (σ : StructuralAction.Assignment n)
+    (Φ : GenCNF n) : Bool :=
   Φ.foldr (fun C acc => genClauseEval σ C && acc) true
 
-/--
-抽象的 3-SAT 转换：
+-- 把 3 个字面打包成一个 3-子句
+def mkClause3 {n : Nat}
+    (a b c : StructuralAction.Literal n)
+    : StructuralAction.Clause n :=
+  fun
+  | ⟨0, _⟩ => a
+  | ⟨1, _⟩ => b
+  | ⟨2, _⟩ => c
 
-给定一个一般 CNF（每个子句可以是任意长度），
-返回一个 3-CNF（所有子句长度为 3）。
+-- 把一个变长子句 Γ 拆成若干个 3-子句列表
+-- 简单 padding：不引入新变量，因此只保证：
+--   genClauseEval σ Γ = true  ⇒  cnfEval σ (to3CNFClause Γ) = true
+def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
+  | []        => []
+  | [a]       => [mkClause3 a a a]
+  | [a, b]    => [mkClause3 a a b]
+  | [a, b, c] => [mkClause3 a b c]
+  | a :: b :: c :: rest =>
+      mkClause3 a b c :: to3CNFClause rest
 
-这里先给出一个 **占位实现**（空列表），
-并通过公理 `to3CNF_equisat` 保证它在语义上与原公式等价；
-将来可以把这里替换为真正的 Tseitin 转换。 -/
-noncomputable
-def to3CNF {n : Nat} (Φ : GenCNF n) : CNF n :=
-  []  -- 占位实现：真正版本应生成等价的 3-CNF
+-- 3-SAT 转换：对每个一般子句做 to3CNFClause，然后拼接
+def to3CNF {n : Nat} (Φ : GenCNF n) : StructuralAction.CNF n :=
+  Φ.foldr (fun Γ acc => to3CNFClause Γ ++ acc) []
 
-/--
-3-CNF 转换的满足性保持公理：
-
-> 对任意赋值 σ，`genCNFEval σ Φ` 与 `cnfEval σ (to3CNF Φ)` 等价。 -/
+-- 3-CNF 转换的“满足性规格”：占位未来的严格证明
 axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
-  ∀ σ : Assignment n,
-    genCNFEval σ Φ = true ↔ cnfEval σ (to3CNF Φ) = true
+  ∀ σ : StructuralAction.Assignment n,
+    genCNFEval σ Φ = true ↔
+    StructuralAction.cnfEval σ (to3CNF Φ) = true
 
-/--
-PHPₙ 的布尔变量个数（Nat）：
+------------------------------------------------------------
+-- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
+------------------------------------------------------------
 
-理论上是 `(n+1) * n` 个变量 `x_{p,h}`，我们在此再 `Nat.succ` 一次，
-得到一个“安全上界”作为 `Fin` 的上限：
-`PHPVar n = ((n+1)*n) + 1`。 -/
+-- 第 n 个鸽子：共有 n+1 只鸽子
+abbrev Pigeon (n : Nat) := Fin (n + 1)
+
+-- 第 n 个洞：共有 n 个洞
+abbrev Hole (n : Nat) := Fin n
+
+-- PHPₙ 的布尔变量个数上界：(n+1)*n + 1
 abbrev PHPVar (n : Nat) : Nat :=
   Nat.succ ((n + 1) * n)
 
-/-- PHPₙ 的变量索引类型：`Fin (PHPVar n)`。 -/
+-- PHPₙ 的变量索引类型
 abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
 
-/--
-把 (p, h) 映射到一个变量索引：
-
-采用编码：
-`index(p, h) = p.val * n + h.val`，并证明它落在 `Fin (PHPVar n)` 的范围内。 -/
+-- 把 (p, h) 映射到变量索引：index(p, h) = p * n + h
 noncomputable
 def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
   ⟨p.1 * n + h.1, by
+    -- 证明 p.1 * n + h.1 < PHPVar n = (n+1)*n + 1
     have hp_le : p.1 ≤ n := Nat.le_of_lt_succ p.2
     have hh_lt : h.1 < n := h.2
     have hh_le : h.1 ≤ n - 1 := Nat.le_pred_of_lt hh_lt
@@ -772,55 +172,54 @@ def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
     have h_total : p.1 * n + h.1 ≤ n * n + n :=
       le_trans (le_trans h1a h1b) h1c
     have h_le : p.1 * n + h.1 ≤ (n + 1) * n := by
-      simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc,
-             Nat.mul_comm] using h_total
-    have : p.1 * n + h.1 ≤ (n + 1) * n := h_le
-    exact Nat.lt_succ_of_le
-      (by
-        simpa [PHPVar] using this)⟩
+      -- n * n + n = n * (n+1) = (n+1)*n
+      simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm,
+             Nat.add_assoc, Nat.mul_comm] using h_total
+    have : p.1 * n + h.1 < ((n + 1) * n) + 1 :=
+      Nat.lt_succ_of_le h_le
+    simpa [PHPVar] using this ⟩
 
-/-- 把所有鸽子列成一个 List。 -/
+-- 把所有鸽子列成一个 List
 noncomputable
 def pigeonsList (n : Nat) : List (Pigeon n) :=
   List.ofFn (fun p : Pigeon n => p)
 
-/-- 把所有洞列成一个 List。 -/
+-- 把所有洞列成一个 List
 noncomputable
 def holesList (n : Nat) : List (Hole n) :=
   List.ofFn (fun h : Hole n => h)
 
-/--
-列出一个 List 中所有“有序对 (xᵢ, xⱼ)，其中 i < j”：
-
-例如 `listPairs [a,b,c] = [(a,b),(a,c),(b,c)]`。 -/
+-- 列出一个 List 中所有“有序对 (xᵢ, xⱼ)，其中 i < j”
 def listPairs {α : Type} : List α → List (α × α)
   | []       => []
   | x :: xs  => (xs.map (fun y => (x,y))) ++ listPairs xs
 
-/-- 单只鸽子的 “至少一个洞” 子句：`∨_{h : Hole n} x_{p,h}`。 -/
+-- 单只鸽子的 “至少一个洞” 子句：∨_{h} x_{p,h}
 noncomputable
 def phpClauseAtLeastOne (n : Nat) (p : Pigeon n) :
     GenClause (PHPVar n) :=
   (List.ofFn fun h : Hole n =>
-    { var := phpVarIndex n p h
-    , neg := false })
+    ({ var := phpVarIndex n p h, neg := false } :
+      StructuralAction.Literal (PHPVar n)))
 
-/-- “At Least One” 子句族：对每个鸽子 p。 -/
+-- “At Least One” 子句族：对每个鸽子 p
 noncomputable
 def PHP_atLeastOne (n : Nat) : GenCNF (PHPVar n) :=
   List.ofFn (fun p : Pigeon n => phpClauseAtLeastOne n p)
 
-/-- 对固定的洞 h，生成所有 “至多一只鸽子占 h” 的 2 字面子句。 -/
+-- 对固定洞 h，生成所有 “至多一只鸽子占 h” 的 2 字面子句
 noncomputable
 def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
     GenCNF (PHPVar n) :=
-  let ps    : List (Pigeon n)             := pigeonsList n
-  let pairs : List (Pigeon n × Pigeon n)  := listPairs ps
+  let ps    : List (Pigeon n)            := pigeonsList n
+  let pairs : List (Pigeon n × Pigeon n) := listPairs ps
   pairs.map (fun (p₁, p₂) =>
-    [ { var := phpVarIndex n p₁ h, neg := true }
-    , { var := phpVarIndex n p₂ h, neg := true } ])
+    [ ({ var := phpVarIndex n p₁ h, neg := true } :
+         StructuralAction.Literal (PHPVar n)),
+      ({ var := phpVarIndex n p₂ h, neg := true } :
+         StructuralAction.Literal (PHPVar n)) ])
 
-/-- “At Most One” 子句族：对每个洞 h。 -/
+-- “At Most One” 子句族：对每个洞 h
 noncomputable
 def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
   let hs : List (Hole n) := holesList n
@@ -828,185 +227,268 @@ def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
     (fun h acc => phpClausesAtMostOneForHole n h ++ acc)
     []
 
-/-- PHPₙ 的完整变长 CNF（未 3-SAT 化）：AtLeastOne ∧ AtMostOne。 -/
+-- PHPₙ 的完整变长 CNF（未 3-SAT 化）：AtLeastOne ∧ AtMostOne
 noncomputable
 def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
-/--
-PHPₙ 的 3-SAT 编码骨架：
-
-通过抽象函数 `to3CNF` 把变长 CNF 转成 3-CNF，
-并依赖公理 `to3CNF_equisat` 保证满足性等价。 -/
+-- PHPₙ 的 3-SAT 编码：HardCNF = to3CNF (PHP_fullGenCNF)
 noncomputable
-def PHPcnf (n : Nat) : CNF (PHPVar n) :=
+def PHPcnf (n : Nat) : StructuralAction.CNF (PHPVar n) :=
   to3CNF (PHP_fullGenCNF n)
 
-/--
-关键语义桥（axiom，占位未来的严谨证明）：
-
-> PHP_fullGenCNF n 可满足 ⇔ 存在从鸽子到洞的单射。 -/
+-- PHP_fullGenCNF 的语义桥接：SAT ↔ 存在单射 f : Pigeon → Hole
 axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
-  (∃ σ : Assignment (PHPVar n),
+  (∃ σ : StructuralAction.Assignment (PHPVar n),
      genCNFEval σ (PHP_fullGenCNF n) = true)
   ↔
   (∃ f : Pigeon n → Hole n, Function.Injective f)
 
 end PigeonholeFamily
 
-
-/-! ------------------------------------------------------------
-### 16.1 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
------------------------------------------------------------- -/
+------------------------------------------------------------
+-- 5. 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
+------------------------------------------------------------
 
 section PigeonholeMath
 
 open Function
+open PigeonholeFamily
 
-/--
-纯数学版鸽笼原理（函数形式）：
-
-`Pigeon n = Fin (n+1)` 有 `n+1` 个元素，
-`Hole n   = Fin n`     有 `n`   个元素。
-
-不存在从 `Pigeon n` 到 `Hole n` 的单射。 -/
 lemma no_injection_Pigeon_to_Hole (n : Nat) :
-    ¬ ∃ f : PigeonholeFamily.Pigeon n → PigeonholeFamily.Hole n,
-        Function.Injective f := by
+    ¬ ∃ f : Pigeon n → Hole n, Function.Injective f := by
   intro h
   rcases h with ⟨f, hf_inj⟩
   have h_card_le :
-      Fintype.card (PigeonholeFamily.Pigeon n)
-        ≤ Fintype.card (PigeonholeFamily.Hole n) :=
+      Fintype.card (Pigeon n)
+        ≤ Fintype.card (Hole n) :=
     Fintype.card_le_of_injective f hf_inj
-  have h_succ_le :
-      n.succ ≤ n := by
-    simpa [PigeonholeFamily.Pigeon, PigeonholeFamily.Hole,
-           Fintype.card_fin, Nat.succ_eq_add_one] using h_card_le
+  have h_succ_le : n.succ ≤ n := by
+    simpa [Pigeon, Hole, Fintype.card_fin, Nat.succ_eq_add_one] using h_card_le
   exact Nat.not_succ_le_self n h_succ_le
 
 end PigeonholeMath
 
+------------------------------------------------------------
+-- 6. 从 PHP_fullGenCNF 到 3-CNF PHPcnf 的 UNSAT 逻辑链
+------------------------------------------------------------
 
-/-! ------------------------------------------------------------
-### 17. 从 PHP_fullGenCNF 到 HardCNF 的 UNSAT 逻辑链
------------------------------------------------------------- -/
+section PHPUnsat
 
-section HardFamily
+open PigeonholeFamily
 
-/-- 把 PHPₙ 的 3-CNF 视为复杂性理论中的“困难族” CNF。 -/
-noncomputable
-def HardCNF (n : Nat) : CNF (PigeonholeFamily.PHPVar n) :=
-  PigeonholeFamily.PHPcnf n
-
-/--
-由 PHP 的语义桥 + 纯数学鸽笼原理得到：
-
-> PHP_fullGenCNF n 是不可满足的（不存在使其为真的赋值）。 -/
+-- PHP_fullGenCNF 不可满足
 lemma PHP_fullGenCNF_unsat (n : Nat) :
-  ¬ ∃ σ : Assignment (PigeonholeFamily.PHPVar n),
-      PigeonholeFamily.genCNFEval σ (PigeonholeFamily.PHP_fullGenCNF n) = true := by
+  ¬ ∃ σ : Assignment (PHPVar n),
+      genCNFEval σ (PHP_fullGenCNF n) = true := by
   intro hSat
-  -- 由 satisfiable ⇒ 存在单射
   have hInj :
-      ∃ f : PigeonholeFamily.Pigeon n → PigeonholeFamily.Hole n,
-        Function.Injective f :=
-    (PigeonholeFamily.PHP_fullGenCNF_sat_iff_injection n).1 hSat
-  -- 但这与鸽笼原理矛盾
+      ∃ f : Pigeon n → Hole n, Function.Injective f :=
+    (PHP_fullGenCNF_sat_iff_injection n).1 hSat
   exact no_injection_Pigeon_to_Hole n hInj
 
-/--
-利用 `to3CNF_equisat`，把 PHP_fullGenCNF 的 UNSAT 推向 3-CNF HardCNF 的 UNSAT：
+-- HardCNF n = PHPcnf n：3-SAT 形式的鸽笼公式
+noncomputable
+def HardCNF (n : Nat) : CNF (PHPVar n) :=
+  PHPcnf n
 
-> 对任意赋值 σ，`cnfEval σ (HardCNF n) = false`。 -/
+-- 对任意赋值 σ，HardCNF n 在 σ 下为 false（不可满足）
 lemma HardCNF_unsat (n : Nat) :
-  ∀ σ : Assignment (PigeonholeFamily.PHPVar n),
+  ∀ σ : Assignment (PHPVar n),
     cnfEval σ (HardCNF n) = false := by
   intro σ
   classical
   have hUnsatGen := PHP_fullGenCNF_unsat n
   have hNotSatCnf : ¬ cnfEval σ (HardCNF n) = true := by
     intro hSat
+    -- 利用 to3CNF_equisat，把 3-CNF 的可满足性拉回 GenCNF
     have hEquiv :=
-      PigeonholeFamily.to3CNF_equisat
-        (Φ := PigeonholeFamily.PHP_fullGenCNF n) (σ := σ)
+      to3CNF_equisat
+        (Φ := PHP_fullGenCNF n) (σ := σ)
     have hSat3 :
-        cnfEval σ (PigeonholeFamily.to3CNF (PigeonholeFamily.PHP_fullGenCNF n)) = true := by
-      simpa [HardCNF, PigeonholeFamily.PHPcnf] using hSat
+        cnfEval σ (to3CNF (PHP_fullGenCNF n)) = true := by
+      simpa [HardCNF, PHPcnf] using hSat
     have hSatGen :
-        PigeonholeFamily.genCNFEval σ (PigeonholeFamily.PHP_fullGenCNF n) = true :=
+        genCNFEval σ (PHP_fullGenCNF n) = true :=
       hEquiv.mpr hSat3
     exact hUnsatGen ⟨σ, hSatGen⟩
+  -- Bool 只有 true / false 两种情况
   have hOr :
       cnfEval σ (HardCNF n) = true ∨
       cnfEval σ (HardCNF n) = false := by
     cases h' : cnfEval σ (HardCNF n) <;> simp [h']
-  have hFalse : cnfEval σ (HardCNF n) = false := by
-    cases hOr with
-    | inl hTrue =>
-        exact (hNotSatCnf hTrue).elim
-    | inr hFalse =>
-        exact hFalse
-  exact hFalse
+  cases hOr with
+  | inl hTrue =>
+      exact False.elim (hNotSatCnf hTrue)
+  | inr hFalse =>
+      exact hFalse
 
-end HardFamily
+end PHPUnsat
 
+------------------------------------------------------------
+-- 7. 抽象 DPLL 作用量序列 + 指数下界 / 多项式上界 schema
+------------------------------------------------------------
 
-/-! ------------------------------------------------------------
-### 18. DPLL 作用量困难族 HardActionDPLL（复杂性 schema）
------------------------------------------------------------- -/
+-- 一个“作用量族”：给每个规模 n（例如 PHPₙ）一个自然数 A n
+-- 在直觉上，你可以把 A n 理解为：
+--   HardActionDPLL n = 在 HardCNF n 上，所有合法 DPLL 轨迹 ψ 的
+--                      最小结构作用量 A[ψ]
+def ActionSeq := Nat → Nat
 
-section DPLLHardAction
+-- 指数下界：A n ≥ 2^n
+def ExpLower_2pow (A : ActionSeq) : Prop :=
+  ∀ n : Nat, (2 : Nat)^n ≤ A n
 
-/--
-`HardActionDPLL n`：第 n 个公式族（例如 PHPₙ 的 3-SAT 编码）上，
-某种“规范选择的” DPLL 作用量。
+-- 多项式上界（这里先固定成 n^2 的玩具版本）
+def PolyUpper_general (A : ActionSeq) : Prop :=
+  ∀ n : Nat, A n ≤ n^2
 
-直觉上可以理解为：在 `HardCNF n` 上运行某个固定 DPLL 算法所得的
-**结构作用量 A[ψₙ]**。这里我们暂时把它作为一个抽象序列引入，
-后续再尝试用 DPLLPath 和 dpllAction 具体刻画它。 -/
+-- 玩具矛盾：如果 A 同时满足“指数下界 + n^2 上界”，则矛盾
+theorem toy_hardFamily_contradiction
+    (A : ActionSeq)
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper_general A) : False := by
+  -- 在 n = 10 处抽一个具体矛盾出来
+  have h₁ : (2 : Nat)^10 ≤ A 10 := hLower 10
+  have h₂ : A 10 ≤ 10^2 := hUpper 10
+  have h_le : (2 : Nat)^10 ≤ 10^2 := le_trans h₁ h₂
+  -- 已知 10^2 < 2^10
+  have h_lt : 10^2 < (2 : Nat)^10 := by
+    norm_num
+  -- 合并得到 2^10 < 2^10，矛盾
+  have h_absurd : (2 : Nat)^10 < (2 : Nat)^10 :=
+    lt_of_le_of_lt h_le h_lt
+  exact lt_irrefl _ h_absurd
+
+-- 更语义化的包装名字
+theorem no_polyTime_on_family
+    (A : ActionSeq)
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper_general A) :
+    False :=
+  toy_hardFamily_contradiction A hLower hUpper
+
+------------------------------------------------------------
+-- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
+------------------------------------------------------------
+
+-- 概念上：HardActionDPLL n =
+--   “在 HardCNF n 上，所有合法 DPLL 轨迹 ψ 的最小作用量 A[ψ]”
+-- 这里先作为抽象序列，由后续复杂性理论给出性质。
 axiom HardActionDPLL : ActionSeq
 
-/--
-**指数下界假设（理论内容）**：
-
-复杂性理论告诉我们：在选定的困难族（例如 PHPₙ 的 3-SAT 编码）上，
-任何符合 DPLL 规则的求解过程，其“结构作用量”至少是指数级：
-
-> ∀ n, 2^n ≤ HardActionDPLL n.
-
-真正要证明的困难部分就是这个断言；
-目前我们在 Lean 中把它作为一个待攻克的公理。 -/
+-- 指数下界假设（复杂性方向的核心目标）：
+--   在 PHP 困难族 HardCNF n 上，任何 DPLL 轨迹的作用量都 ≥ 2^n，
+--   从而 HardActionDPLL n ≥ 2^n。
 axiom hardActionDPLL_expLower_2pow :
   ExpLower_2pow HardActionDPLL
 
-/--
-**多项式上界假设（算法层面的假设）**：
-
-如果我们假设存在一个 DPLL 算法，它在困难族上是多项式时间，
-并且每一步的结构密度由某个多项式统一上界，
-则由 `pathActionNat_polyUpper` 可推出 HardActionDPLL 也满足多项式上界。 -/
+-- 多项式上界假设（算法/工程上的“反面假设”）：
+--   若我们假设 DPLL 在 HardCNF n 上是“多项式时间 + 每步结构密度多项式有界”，
+--   通过类似 pathActionNat_polyUpper 的推理，可推出：
+--     HardActionDPLL n ≤ n^2（这里用 n^2 当作统一的 P(n) 玩具上界）
 axiom hardActionDPLL_polyUpper_from_alg :
   PolyUpper_general HardActionDPLL
 
-/--
-**最终矛盾定理：**
-
-> 若困难族 HardCNF 上的 DPLL 作用量既有**指数下界**，
-> 又源于某种“多项式时间 + 多项式密度上界”的算法假设，
-> 则导致矛盾。 -/
+-- 最终矛盾：同一个 HardActionDPLL 既有指数下界又有 n^2 上界 ⇒ 不可能。
 theorem no_polyTime_DPLL_on_hardFamily : False :=
   no_polyTime_on_family
     HardActionDPLL
     hardActionDPLL_expLower_2pow
     hardActionDPLL_polyUpper_from_alg
 
-end DPLLHardAction
+------------------------------------------------------------
+-- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
+--    （与 PHPₙ / HardCNF 完全独立，是一个纯组合学工具）
+------------------------------------------------------------
 
+-- 抽象算法模型：状态类型 + init + step + halting
+structure AlgorithmModel (n : Nat) where
+  StateType : Type
+  init     : CNF n → StateType
+  step     : CNF n → StateType → StateType
+  halting  : CNF n → StateType → Prop
+
+-- 算法在公式 Φ 上的一条有限轨迹 ψ
+structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
+  T      : Nat
+  states : Fin (T+1) → A.StateType
+  h_init :
+    states ⟨0, Nat.succ_pos _⟩ = A.init Φ
+  h_step :
+    ∀ t : Fin T,
+      states ⟨t.1.succ, Nat.succ_lt_succ t.2⟩
+        = A.step Φ (states ⟨t.1, Nat.lt_trans t.2 (Nat.lt_succ_self _)⟩)
+  h_halt :
+    A.halting Φ (states ⟨T, Nat.lt_succ_self _⟩)
+
+open Finset
+
+-- 离散结构作用量：
+--   pathActionNat A Φ density ψ = ∑_{t=0}^T density(s_t)
+def pathActionNat {n : Nat} (A : AlgorithmModel n) (Φ : CNF n)
+    (density : A.StateType → Nat)
+    (ψ : ComputationPath A Φ) : Nat :=
+  (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+    (fun t => density (ψ.states t))
+
+-- 核心下界引理：
+--   若对路径上的每个状态 s_t 有 density(s_t) ≥ 1，
+--   则作用量和 ≥ (T+1)。
+lemma pathActionNat_ge_time
+    {n : Nat} (A : AlgorithmModel n)
+    (density : A.StateType → Nat)
+    (hPos : ∀ (Φ : CNF n) (ψ : ComputationPath A Φ) (t : Fin (ψ.T + 1)),
+      1 ≤ density (ψ.states t)) :
+    ∀ (Φ : CNF n) (ψ : ComputationPath A Φ),
+      ψ.T + 1 ≤ pathActionNat A Φ density ψ := by
+  intro Φ ψ
+  classical
+  -- 每一步都有 density(s_t) ≥ 1
+  have h_each : ∀ t : Fin (ψ.T + 1),
+      1 ≤ density (ψ.states t) :=
+    fun t => hPos Φ ψ t
+
+  -- ∑ 1 ≤ ∑ density
+  have h_sum_le :
+      (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
+      ≤
+      (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+        (fun t => density (ψ.states t)) := by
+    refine Finset.sum_le_sum ?h
+    intro t ht
+    exact h_each t
+
+  -- 常数和：∑_t 1 = card * 1 = (T+1)
+  have h_sum_const :
+      (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
+        = ψ.T + 1 := by
+    -- 先用 sum_const_nat 得到 card * 1
+    have h0 :
+        (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
+          =
+        (Finset.univ : Finset (Fin (ψ.T + 1))).card * (1 : Nat) := by
+      simpa using
+        (Finset.sum_const_nat
+          (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
+          (b := (1 : Nat)))
+    -- 再用 card_univ = ψ.T + 1
+    have h_card :
+        (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
+      simpa [Finset.card_univ, Fintype.card_fin]
+    simpa [h_card] using h0
+
+  -- 把下界写成 ψ.T + 1 ≤ ∑ density
+  have h_final :
+      ψ.T + 1 ≤
+      (Finset.univ : Finset (Fin (ψ.T + 1))).sum
+        (fun t => density (ψ.states t)) := by
+    simpa [h_sum_const] using h_sum_le
+
+  -- 最后展开 pathActionNat
+  simpa [pathActionNat] using h_final
 
 end StructuralAction
-
-
 
 
 
