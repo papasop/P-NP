@@ -33,29 +33,41 @@ def clauseEval {n : Nat} (σ : Assignment n) (C : Clause n) : Bool :=
   let ℓ2 := C ⟨2, by decide⟩
   literalEval σ ℓ0 || literalEval σ ℓ1 || literalEval σ ℓ2
 
-/-- 评价 CNF：所有子句的合取 -/
-def cnfEval {n : Nat} (σ : Assignment n) (Φ : CNF n) : Bool :=
-  Φ.foldr (fun C acc => clauseEval σ C && acc) true
+/-- 评价 CNF：所有子句的合取（递归定义版本） -/
+def cnfEval {n : Nat} (σ : Assignment n) : CNF n → Bool
+  | []      => true
+  | C :: Φ  => clauseEval σ C && cnfEval σ Φ
 
 /-- 满足解集合 -/
 def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
   { σ | cnfEval σ Φ = true }
 
 
-/-! ### 2. 能量函数 E：未满足子句个数 -/
+/-! ### 2. 能量函数 E：未满足子句个数（递归定义） -/
 
-/-- 能量：未满足子句数量 -/
-def energy {n : Nat} (Φ : CNF n) (σ : Assignment n) : Nat :=
-  Φ.foldr
-    (fun C acc =>
-      let ok := clauseEval σ C
-      acc + (if ok then 0 else 1))
-    0
+/-- 能量：未满足子句数量（递归版） -/
+def energy {n : Nat} : CNF n → Assignment n → Nat
+  | [],      _ => 0
+  | C :: Φ,  σ => energy Φ σ + (if clauseEval σ C then 0 else 1)
 
-/-- 暂时用 axiom：满足 ↔ 能量为 0。  
-    将来可以用真正的归纳证明替掉。 -/
-axiom sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
-  σ ∈ satSet Φ ↔ energy Φ σ = 0
+/-- 辅助引理：`cnfEval = true` 当且仅当 `energy = 0`。 -/
+lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
+    cnfEval σ Φ = true ↔ energy Φ σ = 0 := by
+  -- 对公式 Φ 做 List 归纳
+  induction Φ with
+  | nil =>
+      -- 空 CNF：永真，能量恒 0
+      simp [cnfEval, energy]
+  | cons C Φ ih =>
+      classical
+      -- 对当前子句的布尔值做真/假分类
+      cases hC : clauseEval σ C <;>
+        simp [cnfEval, energy, hC, ih]
+
+/-- 满足 ↔ 能量为 0（真正证明版） -/
+lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
+  σ ∈ satSet Φ ↔ energy Φ σ = 0 := by
+  simpa [satSet] using (cnfEval_true_iff_energy_zero (Φ := Φ) (σ := σ))
 
 
 /-! ### 3. 配置图（汉明距离 1） -/
@@ -446,7 +458,6 @@ lemma dpllAction_polyUpper
         intro Φ' ψ'
         exact hP Φ' ψ')
       Φ ψ
-  -- 只需要把 dpllAction 展开成 pathActionNat
   simpa [dpllAction] using h
 
 /-- CDCL 版的多项式上界：  
@@ -534,7 +545,6 @@ theorem expLower_2pow_not_PolyUpper_general
     (A : ActionSeq)
     (hLower : ExpLower_2pow A)
     (hUpper : PolyUpper_general A) : False := by
-  -- 直接复用玩具定理：这里只是重命名 PolyUpper_n2 = PolyUpper_general
   exact toy_hardFamily_contradiction A hLower (by intro n; exact hUpper n)
 
 /-- 抽象的“DPLL 硬族作用量”：对每个 n 给出一个离散作用量值。  
