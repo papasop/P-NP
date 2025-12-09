@@ -61,9 +61,6 @@ lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
       classical
       by_cases hC : clauseEval σ C = true
       · -- 当前子句为真
-        have hC' : clauseEval σ C = false → False := by
-          intro hc
-          simpa [hC] using hc
         simp [cnfEval, energy, hC, ih]
       · -- 当前子句为假
         have hC' : clauseEval σ C = false := by
@@ -224,7 +221,7 @@ def updateAssign {n : Nat} (s : DPLLState n) (i : Fin n) (b : Bool) :
   fun j => if h : j = i then b else s.assign j
 
 /--
-一个非常简化的“单位传播/决策”原语：
+简化版“单位传播/决策”原语：
 
 - 在当前公式中，取第一个子句 C；
 - 在 C 的三个字面中，找第一项变量尚未决定的字面 ℓ；
@@ -452,50 +449,28 @@ lemma sum_fin_ge_of_prefix_ge_one
   · -- k = 0
     simp
   · -- k.succ
-    -- 定义尾部函数 g：丢掉第 0 个元素，从后面 k+1 个里看
     let g : Fin (k+1) → ℕ := fun i => f i.succ
-
-    -- 证明 g 也满足“前缀 ≥ 1”的性质（界限是 k）
     have hg : ∀ i : Fin (k+1), i.1 < k → 1 ≤ g i := by
       intro i hi
       have hi' : (i.succ : Fin (k.succ + 1)).1 < k.succ := by
-        -- i.succ.val = i.val.succ
-        -- hi : i.val < k ⇒ i.val.succ < k.succ
         simpa [Fin.succ] using Nat.succ_lt_succ hi
       have h' := h (i.succ) hi'
       simpa [g] using h'
-
-    -- 用归纳假设作用在 g 上：得到尾部和 ≥ k
     have h_tail : k ≤ ∑ i : Fin (k+1), g i :=
       ih g hg
-
-    -- 头部项 f 0 也至少是 1
     have h_head : 1 ≤ f 0 := by
       have : (0 : ℕ) < k.succ := Nat.succ_pos _
       have h' := h (0 : Fin (k.succ + 1)) this
       simpa using h'
-
-    -- 利用 Fin.sum_univ_succ 把总和拆成“头 + 尾”
     have hsum :
       (∑ t : Fin (k.succ + 1), f t)
         = f 0 + ∑ i : Fin (k+1), g i := by
-      -- Fin.sum_univ_succ : ∑ i : Fin (n+1), f i = f 0 + ∑ i : Fin n, f i.succ
-      -- 此处 n := k.succ，域 Fin (k.succ+1) = Fin (k+1+1)
       simpa [g, Nat.succ_eq_add_one] using
         (Fin.sum_univ_succ (f := f))
-
-    -- 利用 1 ≤ f 0 和 k ≤ ∑ g i 推出 k.succ ≤ f 0 + ∑ g i
     have hk :
         k.succ ≤ f 0 + ∑ i : Fin (k+1), g i := by
-      -- 1 + k ≤ f0 + tail
       have := Nat.add_le_add h_head h_tail
-      -- 左边：1 + k = k.succ
-      -- 右边：f 0 + ∑ g i
       simpa [Nat.succ_eq_add_one, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc] using this
-
-    -- 代回总和 ∑ f t
-    -- 目标：k.succ ≤ ∑ t : Fin (k.succ+1), f t
-    -- 用 hsum 把右边换成 f 0 + ∑ g
     simpa [hsum] using hk
 
 /-- 把上面的组合引理用于抽象作用量：
@@ -535,11 +510,8 @@ lemma pathActionNat_polyUpper
       pathActionNat A Φ density ψ ≤ (P n + 1) * C := by
   intro Φ ψ
   classical
-  -- 每一步都有 density(s_t) ≤ C
   have h_each : ∀ t : Fin (ψ.T + 1), density (ψ.states t) ≤ C :=
     fun t => hC Φ ψ t
-
-  /- ∑ density ≤ ∑ 常数 C -/
   have h_sum_le' :
     (Finset.univ : Finset (Fin (ψ.T + 1))).sum
         (fun t => density (ψ.states t))
@@ -549,8 +521,6 @@ lemma pathActionNat_polyUpper
     refine Finset.sum_le_sum ?h
     intro t ht
     exact h_each t
-
-  /- 常数和：∑_t C = (T+1) * C -/
   have h_sum_const :
     (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
       =
@@ -567,15 +537,10 @@ lemma pathActionNat_polyUpper
       (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
       simpa [Finset.card_univ, Fintype.card_fin]
     simpa [h_card] using h0
-
-  -- 时间上界 ψ.T ≤ P n ⇒ ψ.T + 1 ≤ P n + 1
   have hT : ψ.T + 1 ≤ P n + 1 :=
     Nat.succ_le_succ (hP Φ ψ)
-
   have hT_mul : (ψ.T + 1) * C ≤ (P n + 1) * C :=
     Nat.mul_le_mul_right _ hT
-
-  /- 最终 calc 链 -/
   calc
     pathActionNat A Φ density ψ
         = (Finset.univ : Finset (Fin (ψ.T + 1))).sum
@@ -691,24 +656,15 @@ theorem toy_hardFamily_contradiction
     (A : ActionSeq)
     (hLower : ExpLower_2pow A)
     (hUpper : PolyUpper_n2 A) : False := by
-  -- 在 n = 10 处抽象出不等式链：
   have h₁ : (2 : ℕ)^10 ≤ A 10 := hLower 10
   have h₂ : A 10 ≤ 10^2 := hUpper 10
   have h_le : (2 : ℕ)^10 ≤ 10^2 := le_trans h₁ h₂
-
-  -- 但实际上 10^2 < 2^10，这是一个可计算事实。
   have h_lt : 10^2 < (2 : ℕ)^10 := by
     norm_num  -- 100 < 1024
-
-  -- 合并得到 2^10 < 2^10，矛盾。
   have h_absurd : (2 : ℕ)^10 < (2 : ℕ)^10 :=
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
 
-
-/-! ------------------------------------------------------------
-### 15. “抽象 PolyUpper_general + ExpLower_2pow ⇒ 矛盾” schema
------------------------------------------------------------- -/
 
 /-- 抽象版本的“多项式上界”：
     这里为了复用 toy 定理，仍然选用 n² 作为统一的上界形状。 -/
@@ -736,7 +692,9 @@ theorem no_polyTime_on_family
 ### 16. 鸽笼原理 PHPₙ 的 CNF 族（变量编码 + GenCNF + to3CNF）
 ------------------------------------------------------------ -/
 
-section PigeonholeFamily
+namespace PigeonholeFamily
+
+open Function
 
 /-- 第 n 个鸽子：共有 n+1 只鸽子。 -/
 abbrev Pigeon (n : Nat) := Fin (n + 1)
@@ -774,10 +732,7 @@ def to3CNF {n : Nat} (Φ : GenCNF n) : CNF n :=
 /--
 3-CNF 转换的满足性保持公理：
 
-> 对任意赋值 σ，`genCNFEval σ Φ` 与 `cnfEval σ (to3CNF Φ)` 等价。
-
-这保证了我们在复杂性理论中可以放心地用 `to3CNF Φ`
-替代原公式而不改变可满足性。 -/
+> 对任意赋值 σ，`genCNFEval σ Φ` 与 `cnfEval σ (to3CNF Φ)` 等价。 -/
 axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
   ∀ σ : Assignment n,
     genCNFEval σ Φ = true ↔ cnfEval σ (to3CNF Φ) = true
@@ -797,49 +752,31 @@ abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
 /--
 把 (p, h) 映射到一个变量索引：
 
-我们采用自然的编码：
-
-> `index(p, h) = p.val * n + h.val`
-
-并在下面证明这个值确实落在 `Fin (PHPVar n)` 的范围内。 -/
+采用编码：
+`index(p, h) = p.val * n + h.val`，并证明它落在 `Fin (PHPVar n)` 的范围内。 -/
 noncomputable
 def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
   ⟨p.1 * n + h.1, by
-    -- 目标：p.1 * n + h.1 < PHPVar n = ((n+1)*n) + 1
-    -- 只需要先证明 ≤ (n+1)*n，然后用 lt_succ_of_le。
     have hp_le : p.1 ≤ n := Nat.le_of_lt_succ p.2
     have hh_lt : h.1 < n := h.2
     have hh_le : h.1 ≤ n - 1 := Nat.le_pred_of_lt hh_lt
-
-    -- 先用 h 的界：h ≤ n-1
     have h1a : p.1 * n + h.1 ≤ p.1 * n + (n - 1) :=
       Nat.add_le_add_left hh_le _
-
-    -- 再用 p 的界：p ≤ n ⇒ p*n ≤ n*n
     have hp_mul : p.1 * n ≤ n * n :=
       Nat.mul_le_mul_right _ hp_le
     have h1b : p.1 * n + (n - 1) ≤ n * n + (n - 1) :=
       Nat.add_le_add_right hp_mul _
-
-    -- 再把 n-1 ≤ n 提升：n*n + (n-1) ≤ n*n + n
     have h1c : n * n + (n - 1) ≤ n * n + n := by
       have : n - 1 ≤ n := Nat.sub_le _ _
       exact Nat.add_le_add_left this _
-
-    -- 综合得到：p*n + h ≤ n*n + n
     have h_total : p.1 * n + h.1 ≤ n * n + n :=
       le_trans (le_trans h1a h1b) h1c
-
-    -- 把 n*n + n 识别成 (n+1)*n
     have h_le : p.1 * n + h.1 ≤ (n + 1) * n := by
       simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm, Nat.add_assoc,
              Nat.mul_comm] using h_total
-
-    -- 最终：p*n + h < (n+1)*n + 1 = PHPVar n
     have : p.1 * n + h.1 ≤ (n + 1) * n := h_le
     exact Nat.lt_succ_of_le
       (by
-        -- 这里把 (n+1)*n 写成 ((n+1)*n)
         simpa [PHPVar] using this)⟩
 
 /-- 把所有鸽子列成一个 List。 -/
@@ -860,13 +797,7 @@ def listPairs {α : Type} : List α → List (α × α)
   | []       => []
   | x :: xs  => (xs.map (fun y => (x,y))) ++ listPairs xs
 
-/-- 单只鸽子的 “至少一个洞” 子句：
-
-`phpClauseAtLeastOne n p` 表示：
-
-  ( ∨_{h : Hole n} x_{p,h} )
-
-也就是一个包含所有洞字面 `x_{p,h}` 的长子句。 -/
+/-- 单只鸽子的 “至少一个洞” 子句：`∨_{h : Hole n} x_{p,h}`。 -/
 noncomputable
 def phpClauseAtLeastOne (n : Nat) (p : Pigeon n) :
     GenClause (PHPVar n) :=
@@ -874,24 +805,12 @@ def phpClauseAtLeastOne (n : Nat) (p : Pigeon n) :
     { var := phpVarIndex n p h
     , neg := false })
 
-/-- “At Least One” 子句族：
-
-对每个鸽子 p : Pigeon n，都有一个子句：
-
-  ( ∨_{h} x_{p,h} )
-
-`PHP_atLeastOne n` 就是所有这些子句的列表。 -/
+/-- “At Least One” 子句族：对每个鸽子 p。 -/
 noncomputable
 def PHP_atLeastOne (n : Nat) : GenCNF (PHPVar n) :=
   List.ofFn (fun p : Pigeon n => phpClauseAtLeastOne n p)
 
-/-- 对固定的洞 h，生成所有 “至多一只鸽子占 h” 的 2 字面子句：
-
-对每一对鸽子 (p₁, p₂)，i < j，加一个子句：
-
-  (¬x_{p₁,h} ∨ ¬x_{p₂,h})
-
-这保证同一个洞不会被两只不同的鸽子同时占用。 -/
+/-- 对固定的洞 h，生成所有 “至多一只鸽子占 h” 的 2 字面子句。 -/
 noncomputable
 def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
     GenCNF (PHPVar n) :=
@@ -901,9 +820,7 @@ def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
     [ { var := phpVarIndex n p₁ h, neg := true }
     , { var := phpVarIndex n p₂ h, neg := true } ])
 
-/-- “At Most One” 子句族：
-
-对每个洞 h，生成所有 `(¬x_{p₁,h} ∨ ¬x_{p₂,h})` 子句，并把它们全部收集起来。 -/
+/-- “At Most One” 子句族：对每个洞 h。 -/
 noncomputable
 def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
   let hs : List (Hole n) := holesList n
@@ -925,32 +842,112 @@ noncomputable
 def PHPcnf (n : Nat) : CNF (PHPVar n) :=
   to3CNF (PHP_fullGenCNF n)
 
+/--
+关键语义桥（axiom，占位未来的严谨证明）：
+
+> PHP_fullGenCNF n 可满足 ⇔ 存在从鸽子到洞的单射。 -/
+axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
+  (∃ σ : Assignment (PHPVar n),
+     genCNFEval σ (PHP_fullGenCNF n) = true)
+  ↔
+  (∃ f : Pigeon n → Hole n, Function.Injective f)
+
 end PigeonholeFamily
 
 
 /-! ------------------------------------------------------------
-### 17. 抽象困难族 HardCNF，用 PHPₙ 作为候选
+### 16.1 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
+------------------------------------------------------------ -/
+
+section PigeonholeMath
+
+open Function
+
+/--
+纯数学版鸽笼原理（函数形式）：
+
+`Pigeon n = Fin (n+1)` 有 `n+1` 个元素，
+`Hole n   = Fin n`     有 `n`   个元素。
+
+不存在从 `Pigeon n` 到 `Hole n` 的单射。 -/
+lemma no_injection_Pigeon_to_Hole (n : Nat) :
+    ¬ ∃ f : PigeonholeFamily.Pigeon n → PigeonholeFamily.Hole n,
+        Function.Injective f := by
+  intro h
+  rcases h with ⟨f, hf_inj⟩
+  have h_card_le :
+      Fintype.card (PigeonholeFamily.Pigeon n)
+        ≤ Fintype.card (PigeonholeFamily.Hole n) :=
+    Fintype.card_le_of_injective f hf_inj
+  have h_succ_le :
+      n.succ ≤ n := by
+    simpa [PigeonholeFamily.Pigeon, PigeonholeFamily.Hole,
+           Fintype.card_fin, Nat.succ_eq_add_one] using h_card_le
+  exact Nat.not_succ_le_self n h_succ_le
+
+end PigeonholeMath
+
+
+/-! ------------------------------------------------------------
+### 17. 从 PHP_fullGenCNF 到 HardCNF 的 UNSAT 逻辑链
 ------------------------------------------------------------ -/
 
 section HardFamily
 
-/-- 把 PHPₙ 视为复杂性理论中的“困难族” CNF。 -/
+/-- 把 PHPₙ 的 3-CNF 视为复杂性理论中的“困难族” CNF。 -/
 noncomputable
-def HardCNF (n : Nat) : CNF (PHPVar n) :=
-  PHPcnf n
+def HardCNF (n : Nat) : CNF (PigeonholeFamily.PHPVar n) :=
+  PigeonholeFamily.PHPcnf n
 
 /--
-占位性质：HardCNFₙ 是 UNSAT。
+由 PHP 的语义桥 + 纯数学鸽笼原理得到：
 
-真实情况里，这里应该是一个定理：
+> PHP_fullGenCNF n 是不可满足的（不存在使其为真的赋值）。 -/
+lemma PHP_fullGenCNF_unsat (n : Nat) :
+  ¬ ∃ σ : Assignment (PigeonholeFamily.PHPVar n),
+      PigeonholeFamily.genCNFEval σ (PigeonholeFamily.PHP_fullGenCNF n) = true := by
+  intro hSat
+  -- 由 satisfiable ⇒ 存在单射
+  have hInj :
+      ∃ f : PigeonholeFamily.Pigeon n → PigeonholeFamily.Hole n,
+        Function.Injective f :=
+    (PigeonholeFamily.PHP_fullGenCNF_sat_iff_injection n).1 hSat
+  -- 但这与鸽笼原理矛盾
+  exact no_injection_Pigeon_to_Hole n hInj
 
-> ∀ n ≥ 1, HardCNF n 是不可满足的。
+/--
+利用 `to3CNF_equisat`，把 PHP_fullGenCNF 的 UNSAT 推向 3-CNF HardCNF 的 UNSAT：
 
-这需要结合鸽笼原理与 `to3CNF_equisat` 的等价性证明；
-目前我们在 Lean 中把它作为一个待攻克的公理引入。 -/
-axiom HardCNF_unsat (n : Nat) :
-  ∀ σ : Assignment (PHPVar n),
-    cnfEval σ (HardCNF n) = false
+> 对任意赋值 σ，`cnfEval σ (HardCNF n) = false`。 -/
+lemma HardCNF_unsat (n : Nat) :
+  ∀ σ : Assignment (PigeonholeFamily.PHPVar n),
+    cnfEval σ (HardCNF n) = false := by
+  intro σ
+  classical
+  have hUnsatGen := PHP_fullGenCNF_unsat n
+  have hNotSatCnf : ¬ cnfEval σ (HardCNF n) = true := by
+    intro hSat
+    have hEquiv :=
+      PigeonholeFamily.to3CNF_equisat
+        (Φ := PigeonholeFamily.PHP_fullGenCNF n) (σ := σ)
+    have hSat3 :
+        cnfEval σ (PigeonholeFamily.to3CNF (PigeonholeFamily.PHP_fullGenCNF n)) = true := by
+      simpa [HardCNF, PigeonholeFamily.PHPcnf] using hSat
+    have hSatGen :
+        PigeonholeFamily.genCNFEval σ (PigeonholeFamily.PHP_fullGenCNF n) = true :=
+      hEquiv.mpr hSat3
+    exact hUnsatGen ⟨σ, hSatGen⟩
+  have hOr :
+      cnfEval σ (HardCNF n) = true ∨
+      cnfEval σ (HardCNF n) = false := by
+    cases h' : cnfEval σ (HardCNF n) <;> simp [h']
+  have hFalse : cnfEval σ (HardCNF n) = false := by
+    cases hOr with
+    | inl hTrue =>
+        exact (hNotSatCnf hTrue).elim
+    | inr hFalse =>
+        exact hFalse
+  exact hFalse
 
 end HardFamily
 
@@ -987,18 +984,8 @@ axiom hardActionDPLL_expLower_2pow :
 **多项式上界假设（算法层面的假设）**：
 
 如果我们假设存在一个 DPLL 算法，它在困难族上是多项式时间，
-并且每一步的结构密度（例如 λ = 能量 / 冲突数 / 决策深度等）
-由某个多项式统一上界，那么结合你之前证明的
-
-> `pathActionNat_polyUpper`
-
-就可以推出：HardActionDPLL 这个序列也满足某种多项式上界。
-
-这里先把这个推论抽象成一个命题：
-
-> ∀ n, HardActionDPLL n ≤ n²
-
-（或者更一般的多项式，当前我们沿用 `PolyUpper_general` 的形状）。 -/
+并且每一步的结构密度由某个多项式统一上界，
+则由 `pathActionNat_polyUpper` 可推出 HardActionDPLL 也满足多项式上界。 -/
 axiom hardActionDPLL_polyUpper_from_alg :
   PolyUpper_general HardActionDPLL
 
@@ -1007,9 +994,7 @@ axiom hardActionDPLL_polyUpper_from_alg :
 
 > 若困难族 HardCNF 上的 DPLL 作用量既有**指数下界**，
 > 又源于某种“多项式时间 + 多项式密度上界”的算法假设，
-> 则导致矛盾。
-
-这个定理本身是你在第 14–15 节搭好的抽象框架的一个实例化版本。 -/
+> 则导致矛盾。 -/
 theorem no_polyTime_DPLL_on_hardFamily : False :=
   no_polyTime_on_family
     HardActionDPLL
@@ -1020,6 +1005,7 @@ end DPLLHardAction
 
 
 end StructuralAction
+
 
 
 
