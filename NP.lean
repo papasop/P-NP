@@ -220,10 +220,7 @@ def updateAssign {n : Nat} (s : DPLLState n) (i : Fin n) (b : Bool) :
 
 - 在当前公式中，取第一个子句 C；
 - 在 C 的三个字面中，找第一项变量尚未决定的字面 ℓ；
-- 若找到，则返回 `(ℓ.var, !ℓ.neg)`，表示为了满足该字面，应将该变量赋为此布尔值；
-- 若找不到（比如三个变量都已决定），返回 none。
-
-> 注意：这不是完整、严格意义上的 unit propagation，仅作为骨架示例。
+- 若必需，将来可以用更严格的 Unit Clause 检测替换此骨架。
 -/
 noncomputable
 def findUnitLiteral {n : Nat} (s : DPLLState n) : Option (Fin n × Bool) :=
@@ -244,13 +241,12 @@ def findUnitLiteral {n : Nat} (s : DPLLState n) : Option (Fin n × Bool) :=
         none
 
 /--
-对状态 s 做一次“传播/决策”步：
+对状态 s 做一次“传播/决策”步（简化骨架版）：
 
 - 若 `findUnitLiteral s = some (i, b)`：
   - 把变量 i 赋值为 b；
   - 从 undecided 中移除 i；
   - 把 (i, b) 记入 decisions；
-  - 公式 formula 与 conflict 标志暂时保持不变（未来可以扩展为真正的冲突检测）。
 - 若找不到可传播的字面，则保持状态不变。
 -/
 noncomputable
@@ -451,29 +447,7 @@ lemma pathActionNat_ge_time
       t.1 < ψ.T → 1 ≤ density (ψ.states t)) :
     ψ.T ≤ pathActionNat A Φ density ψ := by
   classical
-  /-
-  思路（将来可用于填充证明）：
-
-  1. 记 `k := ψ.T`，并考虑函数
-       f : Fin (k+1) → ℕ := fun t => density (ψ.states t)
-
-  2. 在 Fin (k+1) 上，对所有满足 t.val < k 的索引，假设有：
-       1 ≤ f t
-     这是由 hPos 直接给出的。
-
-  3. 证明一个纯组合引理：
-       lemma sum_fin_ge_of_prefix_ge_one
-         (k : ℕ) (f : Fin (k+1) → ℕ)
-         (h : ∀ t, t.val < k → 1 ≤ f t) :
-         k ≤ ∑ t, f t
-
-     再把它套用到当前的 f 即可得到结论。
-
-  4. 这个纯组合引理可以对 k 做归纳，用
-       Fin.sum_univ_succ
-     把 ∑ over Fin (k+2) 拆成 f 0 加上 ∑ over Fin (k+1) (with succ 索引)，
-     再利用归纳假设和 hPos 对应的 1 ≤ f t。
-  -/
+  /- 证明留待后续填充 -/
   sorry
 
 /-- 抽象的“每步能量有界 + 时间多项式有界 ⇒ 作用量多项式有界”定理（自然数版本）。 -/
@@ -508,7 +482,6 @@ lemma pathActionNat_polyUpper
     (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
       =
     (ψ.T + 1) * C := by
-    -- 先用 sum_const_nat 得到 card * C
     have h0 :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
         =
@@ -517,7 +490,6 @@ lemma pathActionNat_polyUpper
         (Finset.sum_const_nat
           (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
           (b := C))
-    -- 再用 card_univ = ψ.T + 1
     have h_card :
       (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
       simpa [Finset.card_univ, Fintype.card_fin]
@@ -619,7 +591,7 @@ end NatActionUpper
 
 
 /-! ------------------------------------------------------------
-### 14. 玩具版 “指数下界 + 多项式上界 ⇒ 矛盾” 定理 （完全无公理版）
+### 14. 玩具版 “指数下界 + 多项式上界 ⇒ 矛盾” 定理
 使用 ℕ 上的 `2^n` 和 `n^2`。
 ------------------------------------------------------------ -/
 
@@ -663,7 +635,6 @@ theorem toy_hardFamily_contradiction
 
 /-! ------------------------------------------------------------
 ### 15. “抽象 PolyUpper_general + ExpLower_2pow ⇒ 矛盾” schema
-（条件版，不再引入额外公理）
 ------------------------------------------------------------ -/
 
 /-- 抽象版本的“多项式上界”：
@@ -686,6 +657,67 @@ theorem no_polyTime_on_family
     (hUpper : PolyUpper_general A) :
     False :=
   expLower_2pow_not_PolyUpper_general A hLower hUpper
+
+
+/-! ------------------------------------------------------------
+### 16. 鸽笼原理 PHPₙ 的 CNF 族（骨架，最终版）
+------------------------------------------------------------ -/
+
+section PigeonholeFamily
+
+/-- 第 n 个鸽子：共有 n+1 只鸽子。 -/
+abbrev Pigeon (n : Nat) := Fin (n + 1)
+
+/-- 第 n 个洞：共有 n 个洞。 -/
+abbrev Hole (n : Nat) := Fin n
+
+/--
+PHPₙ 的布尔变量个数（Nat）：
+
+理论上是 `(n+1) * n` 个变量 `x_{p,h}`。这里额外 `Nat.succ` 做一个“安全上界”，
+保证即使 n = 0 时也至少有一个变量索引。
+-/
+abbrev PHPVar (n : Nat) : Nat :=
+  Nat.succ ((n + 1) * n)
+
+/-- PHPₙ 的变量索引类型：`Fin (PHPVar n)`。 -/
+abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
+
+/--
+（占位版本）把 (p, h) 映射到一个变量索引。
+
+目前简单地把所有 (p, h) 映射到同一个索引 0：
+这足以让后续关于 “存在 CNF 族 `PHPcnf n : CNF (PHPVar n)`” 的
+类型框架跑通。
+
+将来你可以把这里替换成真正的编码：
+`⟨p.1 * n + h.1, 证明 p.1 * n + h.1 < (n+1)*n⟩`，
+并相应地把 `PHPVar n` 改回精确的 `((n+1)*n)`。
+-/
+noncomputable
+def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
+  ⟨0, by
+    -- 证明 `0 < PHPVar n`
+    have : 0 < PHPVar n := by
+      unfold PHPVar
+      exact Nat.succ_pos _
+    simpa using this⟩
+
+/--
+PHPₙ 的 CNF 骨架：
+
+理想情况下，这里会构造两大类子句：
+1. `AtLeastOne`：每只鸽子至少占一个洞；
+2. `AtMostOne`：每个洞里最多一只鸽子。
+
+目前先给出空列表作为占位，以保证整体框架类型正确。
+后续可以在这个基础上依次填入具体子句构造。
+-/
+noncomputable
+def PHPcnf (n : Nat) : CNF (PHPVar n) :=
+  []
+
+end PigeonholeFamily
 
 end StructuralAction
 
