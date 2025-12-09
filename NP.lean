@@ -53,14 +53,12 @@ def energy {n : Nat} : CNF n → Assignment n → Nat
 /-- 辅助引理：`cnfEval = true` 当且仅当 `energy = 0`。 -/
 lemma cnfEval_true_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
     cnfEval σ Φ = true ↔ energy Φ σ = 0 := by
-  -- 对公式 Φ 做 List 归纳
   induction Φ with
   | nil =>
-      -- 空 CNF：永真，能量恒 0
       simp [cnfEval, energy]
   | cons C Φ ih =>
       classical
-      -- 对当前子句的布尔值做真/假分类
+      -- 对当前子句的布尔值分类
       cases hC : clauseEval σ C <;>
         simp [cnfEval, energy, hC, ih]
 
@@ -188,23 +186,97 @@ def DPLLState.isComplete {n : Nat} (s : DPLLState n) : Prop :=
 def DPLLState.isTerminal {n : Nat} (s : DPLLState n) : Prop :=
   s.isSatisfied ∨ (s.hasConflict ∧ s.isComplete)
 
+namespace DPLL
+
+open Classical
+
 /-- DPLL 初始状态：所有变量未决定，赋值全 false -/
-def DPLL.initState {n : Nat} (Φ : CNF n) : DPLLState n :=
+def initState {n : Nat} (Φ : CNF n) : DPLLState n :=
   { assign    := fun _ => false
   , undecided := Finset.univ
   , decisions := []
   , formula   := Φ
   , conflict  := false }
 
-/-- DPLL 单步转移（目前占位实现：恒等） -/
-def DPLL.step {n : Nat} (_Φ : CNF n) (s : DPLLState n) : DPLLState n :=
-  s
+/-- 在状态 s 下评价子句是否为真（语义封装）。 -/
+def clauseTrue {n : Nat} (s : DPLLState n) (C : Clause n) : Bool :=
+  clauseEval s.assign C
+
+/-- 在状态 s 下评价整个公式是否为真（语义封装）。 -/
+def formulaTrue {n : Nat} (s : DPLLState n) : Bool :=
+  cnfEval s.assign s.formula
+
+/-- 当前状态中，变量 i 是否尚未决定？（命题版本） -/
+def isUndecided {n : Nat} (s : DPLLState n) (i : Fin n) : Prop :=
+  i ∈ s.undecided
+
+/-- 更新赋值：把变量 i 设为 b，其他变量保持不变。 -/
+def updateAssign {n : Nat} (s : DPLLState n) (i : Fin n) (b : Bool) :
+    Assignment n :=
+  fun j => if h : j = i then b else s.assign j
+
+/--
+一个非常简化的“单位传播/决策”原语：
+
+- 在当前公式中，取第一个子句 C；
+- 在 C 的三个字面中，找第一项变量尚未决定的字面 ℓ；
+- 若找到，则返回 `(ℓ.var, !ℓ.neg)`，表示为了满足该字面，应将该变量赋为此布尔值；
+- 若找不到（比如三个变量都已决定），返回 none。
+
+> 注意：这不是完整、严格意义上的 unit propagation，仅作为骨架示例。
+-/
+noncomputable
+def findUnitLiteral {n : Nat} (s : DPLLState n) : Option (Fin n × Bool) :=
+  match s.formula with
+  | []      => none
+  | C :: _  =>
+      let ℓ0 := C ⟨0, by decide⟩
+      let ℓ1 := C ⟨1, by decide⟩
+      let ℓ2 := C ⟨2, by decide⟩
+      let mkVal (ℓ : Literal n) : Bool := !ℓ.neg
+      if h0 : isUndecided s ℓ0.var then
+        some (ℓ0.var, mkVal ℓ0)
+      else if h1 : isUndecided s ℓ1.var then
+        some (ℓ1.var, mkVal ℓ1)
+      else if h2 : isUndecided s ℓ2.var then
+        some (ℓ2.var, mkVal ℓ2)
+      else
+        none
+
+/--
+对状态 s 做一次“传播/决策”步：
+
+- 若 `findUnitLiteral s = some (i, b)`：
+  - 把变量 i 赋值为 b；
+  - 从 undecided 中移除 i；
+  - 把 (i, b) 记入 decisions；
+  - 公式 formula 与 conflict 标志暂时保持不变（未来可以扩展为真正的冲突检测）。
+- 若找不到可传播的字面，则保持状态不变。
+-/
+noncomputable
+def unitPropOnce {n : Nat} (s : DPLLState n) : DPLLState n :=
+  match findUnitLiteral s with
+  | none => s
+  | some (i, b) =>
+      { assign    := updateAssign s i b
+      , undecided := s.undecided.erase i
+      , decisions := (i, b) :: s.decisions
+      , formula   := s.formula
+      , conflict  := s.conflict }
+
+/-- DPLL 单步转移：目前实现为一轮简化版的“单位传播/决策”。 -/
+noncomputable
+def step {n : Nat} (_Φ : CNF n) (s : DPLLState n) : DPLLState n :=
+  unitPropOnce s
 
 /-- DPLL 停机条件 -/
-def DPLL.halting {n : Nat} (_Φ : CNF n) (s : DPLLState n) : Prop :=
+def halting {n : Nat} (_Φ : CNF n) (s : DPLLState n) : Prop :=
   DPLLState.isTerminal s
 
+end DPLL
+
 /-- 把 DPLL 包装成 AlgorithmModel -/
+noncomputable
 def DPLLModel (n : Nat) : AlgorithmModel n :=
 { StateType := DPLLState n
 , init     := fun Φ => DPLL.initState Φ
@@ -328,6 +400,7 @@ def exampleDPLLInit : DPLLState 1 :=
   DPLL.initState exampleCNF1
 
 /-- 在 exampleCNF1 上运行 DPLL 一步后的状态 -/
+noncomputable
 def exampleDPLLNext : DPLLState 1 :=
   DPLL.step exampleCNF1 exampleDPLLInit
 
@@ -390,7 +463,6 @@ lemma pathActionNat_polyUpper
     (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
       =
     (ψ.T + 1) * C := by
-    -- 先用 sum_const_nat 得到 card * C
     have h0 :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => C)
         =
@@ -399,7 +471,6 @@ lemma pathActionNat_polyUpper
         (Finset.sum_const_nat
           (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
           (b := C))
-    -- 再用 card_univ = ψ.T + 1
     have h_card :
       (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
       simpa [Finset.card_univ, Fintype.card_fin]
@@ -532,7 +603,8 @@ theorem toy_hardFamily_contradiction
 
 
 /-! ------------------------------------------------------------
-### 15. “抽象 PolyUpper_general + HardActionDPLL ⇒ 矛盾” schema（仍然基于 n²）
+### 15. “抽象 PolyUpper_general + ExpLower_2pow ⇒ 矛盾” schema
+（条件版，不再引入额外公理）
 ------------------------------------------------------------ -/
 
 /-- 抽象版本的“多项式上界”：
@@ -547,27 +619,14 @@ theorem expLower_2pow_not_PolyUpper_general
     (hUpper : PolyUpper_general A) : False := by
   exact toy_hardFamily_contradiction A hLower (by intro n; exact hUpper n)
 
-/-- 抽象的“DPLL 硬族作用量”：对每个 n 给出一个离散作用量值。  
-    在这里不具体构造，留作一个抽象序列，由后续公理描述其性质。 -/
-axiom HardActionDPLL : ActionSeq
-
-/-- 理论上的“指数下界”假设：  
-    硬族上的 DPLL 作用量满足 A(n) ≥ 2^n。 -/
-axiom hardActionDPLL_expLower_2pow :
-  ExpLower_2pow HardActionDPLL
-
-/-- 工程/算法层面的“多项式上界”假设：  
-    若 DPLL 在硬族上是多项式时间，且单步能量多项式有界，则作用量也多项式有界。 -/
-axiom hardActionDPLL_polyUpper_from_alg :
-  PolyUpper_general HardActionDPLL
-
-/-- 最终 schema：  
-    指数下界 + 多项式上界 在同一硬族作用量 HardActionDPLL 上不可能同时成立。 -/
-theorem no_polyTime_DPLL_on_hardFamily : False :=
-  expLower_2pow_not_PolyUpper_general
-    HardActionDPLL
-    hardActionDPLL_expLower_2pow
-    hardActionDPLL_polyUpper_from_alg
+/-- 语义化名称版本：
+    “如果某个作用量族 A 同时满足指数下界和多项式上界，就矛盾。” -/
+theorem no_polyTime_on_family
+    (A : ActionSeq)
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper_general A) :
+    False :=
+  expLower_2pow_not_PolyUpper_general A hLower hUpper
 
 end StructuralAction
 
