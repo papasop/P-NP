@@ -844,8 +844,126 @@ lemma miniRCNF_hasRefutation : Refutation miniRCNF :=
   ⟨miniRefutation⟩
 
 end MiniResolutionExample
+------------------------------------------------------------
+-- 10. 抽象 DPLL 状态 / 模型 / 结构作用量密度 λ
+--
+-- 目标：先给出一个“足够抽象”的 DPLL 算法模型 A_DPLL，
+--      让后续可以在它上面谈：
+--        • 计算轨迹 ψ : ComputationPath A_DPLL Φ
+--        • 结构作用量 A[ψ] = ∑ λ(s_t)
+--      再逐步把它和 Resolution 证明联系起来。
+------------------------------------------------------------
+
+namespace AbstractDPLL
+
+open StructuralAction
+
+/-- 抽象的 DPLL 状态：
+
+* `formula`    ：当前正在求解的 CNF 公式（原始子句集 + 学习子句都可以塞进去）
+* `assignment` ：当前布尔赋值（包含决策 + 单位传播）
+* `decisions`  ：决策 trail（栈），这里只记录字面即可，后面可以细化为带 decision level 的 trail
+* `conflict`   ：当前是否处于冲突状态（例如某个子句在当前赋值下为假）
+
+目前这是一个**极简骨架**，后面你可以往里面加：
+* `learnt` 子句
+* decision level / implication graph 信息
+* 甚至直接附加一个 Resolution 证明 trace
+-/
+structure State (n : Nat) where
+  formula    : CNF n
+  assignment : Assignment n
+  decisions  : List (Literal n)
+  conflict   : Bool
+  deriving Repr
+
+/-- 抽象 DPLL 单步转移：
+
+目前先用恒等映射作为占位实现：
+
+* 这样可以先把 `AlgorithmModel`、`ComputationPath`、`action` 这些
+  形式结构全部接起来。
+* 真正的 DPLL 逻辑（决策 / 单位传播 / 回溯 / 学习子句）可以日后往
+  `stepState` 里替换，而不会破坏已有的抽象定理结构。
+-/
+def stepState {n : Nat} (_Φ : CNF n) (s : State n) : State n :=
+  s
+
+/-- 抽象 DPLL 停机条件：
+
+目前也先给一个“永不停机”的占位版本 `False`，这样：
+
+* 任何有限长的 `ComputationPath` 都只是你手工给出的一个前缀轨迹；
+* 形式上我们不强制“自然停机”，而是把“停机状态”交给后面具体化。
+
+后面你可以把它改成更真实的性质，例如：
+
+* “当前赋值满足 `formula`”，或者
+* “产生不可修复冲突且所有变量已决定”。
+-/
+def haltingState {n : Nat} (_Φ : CNF n) (_s : State n) : Prop :=
+  False
+
+/-- 把上述抽象状态 / 步进规则打包成一个 `AlgorithmModel`。 -/
+def Model (n : Nat) : AlgorithmModel n :=
+{ StateType := State n
+, init := fun Φ =>
+    { formula    := Φ
+    , assignment := fun _ => false
+    , decisions  := []
+    , conflict   := false }
+, step := fun Φ s => stepState Φ s
+, halting := fun Φ s => haltingState Φ s }
+
+/-- 抽象 DPLL 的结构密度 λ：
+
+目前版本：**每个状态的 λ(s) = 1**。
+
+* 这样可以立刻结合你已经证明的 `pathActionNat_ge_time`，
+  得到一个非常粗的下界：A[ψ] ≥ T+1。
+* 将来你想让 Action 精确反映 Resolution 证明长度时，
+  可以把这个定义升级为：
+  - 按决策步计权，
+  - 或按“学习子句 / 回溯阶数 / 冲突次数”计权，
+  再重新用同样的抽象引理包装复杂度信息。
+-/
+noncomputable
+def density {n : Nat} (_s : State n) : Nat :=
+  1
+
+/-- 在抽象 DPLL 模型上的结构作用量：
+    A_DPLL[ψ] = ∑_{t=0}^T λ(s_t)。 -/
+noncomputable
+def action {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (Model n) Φ) : Nat :=
+  pathActionNat (A := Model n) Φ density ψ
+
+/-- 利用第 9 节的一般下界引理 `pathActionNat_ge_time`，
+    直接得到抽象 DPLL 作用量的一个“时间下界”：
+
+> 若 λ(s_t) ≥ 1，则 A[ψ] ≥ T+1。
+
+在当前版本，因为 `density` 恒等于 1，这个条件是立刻满足的。 -/
+lemma action_ge_time {n : Nat} (Φ : CNF n)
+    (ψ : ComputationPath (Model n) Φ) :
+    ψ.T + 1 ≤ action Φ ψ := by
+  -- 套用通用引理：把 `density` 和它的“每步 ≥ 1”条件代进去
+  have h :=
+    pathActionNat_ge_time
+      (A := Model n)
+      (density := density)
+      (Φ := Φ)
+      (ψ := ψ)
+      (hPos := by
+        intro Φ' ψ' t
+        -- 由于 density 恒为 1，这里直接 `simp`
+        simp [density])
+  simpa [action] using h
+
+end AbstractDPLL
 
 end StructuralAction
+
 
 
 
