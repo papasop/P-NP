@@ -848,7 +848,7 @@ def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
     unitPropagateAux τ s clauses
 
 --------------------------------------------------
--- 11.5 ConflictAnalyze / backtrack / decide（decide 修掉 0 < n 问题）
+-- 11.5 ConflictAnalyze / backtrack / decide
 --------------------------------------------------
 
 /-- Conflict Analyze：
@@ -974,7 +974,58 @@ lemma buildPathFromRefutation_action_ge_proofLength
 
 end AbstractDPLL
 
+------------------------------------------------------------
+-- 12. Resolution 生成的困难族 HardFamily → DPLL 作用量指数下界
+------------------------------------------------------------
+
+namespace ResolutionToDPLL
+
+open StructuralAction
+open Resolution
+open AbstractDPLL
+
+/-- 一个抽象的困难公式族：
+    * m : 每个规模参数 n 对应的变量个数；
+    * F n : 一个 CNF 公式，具有 m n 个变量；
+    * π n : 对 cnfToRCNF (F n) 的 Resolution 反驳；
+    * hExp : 反驳长度满足指数下界 2^n。 -/
+structure HardFamily where
+  m    : Nat → Nat
+  F    : ∀ n : Nat, CNF (m n)
+  π    : ∀ n : Nat, Refutes (cnfToRCNF (F n))
+  hExp : ∀ n : Nat, (2 : Nat)^n ≤ proofLength (π n)
+
+/-- 给定一个困难族 HardFamily，把对应的 DPLL 作用量
+    定义成：在模型 Model (m n) 上，沿 buildPathFromRefutation 得到的路径的 Action。 -/
+noncomputable
+def hardActionFromFamily (H : HardFamily) : ActionSeq :=
+  fun n =>
+    let m := H.m n
+    let Φ := H.F n
+    let πn := H.π n
+    let ψ := buildPathFromRefutation (Φ := Φ) (π := πn)
+    pathActionNat (Model m) Φ (density m) ψ
+
+lemma hardActionFromFamily_expLower_2pow (H : HardFamily) :
+  ExpLower_2pow (hardActionFromFamily H) := by
+  intro n
+  -- 缩写一些符号
+  let m := H.m n
+  let Φ := H.F n
+  let πn := H.π n
+  have hExp' : (2 : Nat)^n ≤ proofLength πn := H.hExp n
+  have hSim :
+      proofLength πn ≤
+        pathActionNat (Model m) Φ (density m)
+          (buildPathFromRefutation (Φ := Φ) (π := πn)) :=
+    buildPathFromRefutation_action_ge_proofLength
+      (Φ := Φ) (π := πn)
+  exact le_trans hExp' hSim
+
+end ResolutionToDPLL
+
 end StructuralAction
+
 
 
 
