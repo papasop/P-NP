@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- ★ Resolution 需要 DecidableEq
+  deriving Repr, DecidableEq   -- ★ 加上 DecidableEq，后面 Resolution 需要
 
 -- 子句：3 个字面（仅用于 3-SAT 部分）
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -41,8 +41,8 @@ def cnfEval {n : Nat} (σ : Assignment n) : CNF n → Bool
   | C :: Φ  => clauseEval σ C && cnfEval σ Φ
 
 -- 满足解集合
-def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
-  { σ | cnfEval σ Φ = true }
+def satSet {n : Nat} (Φ : CNF n) :=
+  { σ : Assignment n | cnfEval σ Φ = true }
 
 ------------------------------------------------------------
 -- 2. 能量函数 energy：未满足子句个数（递归定义）
@@ -657,7 +657,7 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 系统（RClause = List (Literal n)）
+-- 10. Resolution 系统（修正版：RClause = List (Literal n)）
 ------------------------------------------------------------
 
 namespace Resolution
@@ -674,7 +674,9 @@ abbrev RCNF (n : Nat) := List (RClause n)
 def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
-/-- Resolution 推导关系（返回 Type，可以在上面定义递归度量）。 -/
+/-- Resolution 推导关系：
+    注意返回值在 `Type` 中，这样我们可以在上面做一般递归
+    （例如定义长度）。 -/
 inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
   | axiom (C : RClause n) (hC : C ∈ Φ) :
       Derives Φ C
@@ -718,7 +720,7 @@ end Resolution
 
 namespace AbstractDPLL
 
-open Resolution  -- 在 StructuralAction 里直接使用 Resolution 名称
+open Resolution  -- 我们已经在 namespace StructuralAction 里了
 
 --------------------------------------------------
 -- 11.1 从 3-SAT CNF 转成 Resolution CNF
@@ -756,29 +758,41 @@ structure State (n : Nat) where
 -- 11.3 DPLL/CDCL 的四个核心操作（目前是“类型正确”的骨架”）
 --------------------------------------------------
 
-/-- Unit Propagation（骨架版）。 -/
+/-- Unit Propagation：
+    * 目标：在 trail 上进行单子句传播；
+    * 当前骨架：先只保持状态不变，后续逐步填充真正逻辑。 -/
 def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
-  -- TODO：真正实现单子句传播
+  -- TODO：扫描 ΦR ∪ learnt，找出 unit clause，
+  --       把对应字面加入 trail，更新 conflict / pending。
   s
 
-/-- Conflict Analyze（骨架版）。 -/
+/-- Conflict Analyze：
+    * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
+    * 当前骨架：暂时不改变状态，只是占位。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
-  -- TODO：用 Resolution 分析冲突，生成 learnt 子句
+  -- TODO：若 s.conflict = some C，则在 trail 上做 UIP 分析，
+  --       通过 Resolution 生成新的 learnt 子句，并清空 conflict 或做 backjump。
   s
 
-/-- Backtrack（骨架版）。 -/
+/-- Backtrack：
+    * 目标：根据冲突分析的结果回溯 trail（CDCL 的 backjump）；
+    * 当前骨架：暂时直接返回原状态。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
-  -- TODO：根据 learnt 子句中的决策层级裁剪 trail
+  -- TODO：根据 learnt 子句中的决策层级，裁剪 trail。
   s
 
-/-- Decide（骨架版）。
-    不再使用 headD 的默认值，避免构造 Fin n 时需要 0 < n 的证据。 -/
+/-- Decide：
+    * 目标：在没有 unit / 冲突时，选择一个未赋值的变量做决策；
+    * 当前骨架：若 pending 非空，就从第一个子句中取一个真实字面；
+      如果该子句为空，则保持不变。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
-  | [] :: _ => s                    -- 空子句：先保持原样（后续可接 conflict）
-  | (lit :: _) :: _ =>              -- 从第一个非空子句取一个字面作为“决策”
-      { s with trail := lit :: s.trail }
+  | C :: _ =>
+      match C with
+      | []        => s
+      | lit :: _  =>
+          { s with trail := lit :: s.trail }
 
 --------------------------------------------------
 -- 11.4 抽象 DPLL 模型：用上述四个操作组合成一步 step
@@ -791,7 +805,12 @@ def initState {n : Nat} (Φ : CNF n) : State n :=
     pending  := cnfToRCNF Φ
     conflict := none }
 
-/-- 抽象 DPLL 模型。 -/
+/-- 抽象 DPLL 模型：
+    * init : 建立 initState；
+    * step : unitPropagate → conflictAnalyze → backtrack → decide 的组合；
+    * halting :
+        - 要么 pending = []（公式“解决完了”）
+        - 要么 conflict ≠ none（找到了冲突 / 反驳）。 -/
 noncomputable
 def Model (n : Nat) : AlgorithmModel n :=
   { StateType := State n
@@ -810,28 +829,48 @@ def Model (n : Nat) : AlgorithmModel n :=
 -- 11.5 结构密度 λ'：每一步至少付出 1 单位 Action
 --------------------------------------------------
 
-/-- 最简骨架版结构密度：每个状态 cost = 1。 -/
+/-- 最简骨架版结构密度：
+    * 每个状态的 cost = 1；
+    * 未来可以升级为：
+        - unitProp / resolve 步单独计价；
+        - 让 Action 精确界面到 Resolution.proofLength。 -/
 def density (n : Nat) (s : State n) : Nat := 1
 
 --------------------------------------------------
 -- 11.6 Resolution → DPLLPath 的“模拟骨架”
 --------------------------------------------------
 
-/-- Resolution 反驳 ⇒ DPLL 计算路径 的模拟记录。 -/
+/-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
+    构造 DPLL 计算路径 ψ，并证明
+      pathActionNat ≥ proofLength π。 -/
 structure Simulation {n : Nat} (Φ : CNF n) where
   π  : Refutes (cnfToRCNF Φ)
   ψ  : ComputationPath (Model n) Φ
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
 
-/-- 存在模拟（当前仍是公理，未来要变成定理）。 -/
+/-- 存在模拟：Resolution 反驳 ⇒ 存在一条 DPLL 轨迹 ψ，
+    使得 Action(ψ) ≥ proofLength(π)。
+
+    ⭐ 当前仍然是公理（axiom），
+       你的终极目标是把它变成真正的 theorem。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ)
 
+/-- 行为下界引理：从 Simulation 结构直接读出
+    Action ≥ Resolution.proofLength。 -/
+theorem action_ge_resProofLength
+  {n : Nat} (Φ : CNF n)
+  (sim : Simulation (Φ := Φ)) :
+  pathActionNat (Model n) Φ (density n) sim.ψ
+    ≥ proofLength sim.π :=
+  sim.hA
+
 end AbstractDPLL
 
 end StructuralAction
+
 
 
 
