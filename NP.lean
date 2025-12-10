@@ -920,8 +920,81 @@ lemma actionSeqOfFamily_expLower
 
   -- 4. 把右边展开成 actionSeqOfFamily 的定义
   simpa [actionSeqOfFamily] using this
+------------------------------------------------------------
+-- 13. 把 Haken Resolution 下界 + Simulation 组合成 DPLL 作用量下界
+------------------------------------------------------------
+
+open Resolution
+open AbstractDPLL
+
+namespace HardFamily
+
+/--
+硬族公式：就是我们之前定义的 Tseitin 版鸽笼公式 HardCNF_T。
+这里只是给它起一个更语义化的名字，方便在本节使用。
+-/
+@[simp] noncomputable
+def F (n : Nat) : CNF (HardVarT n) :=
+  HardCNF_T n
+
+/--
+Haken 定理的抽象版本（占位公理）：
+
+存在一个长度序列 `Len` 和一族 Resolution 反驳 `π n`，
+使得：
+
+1. `Len` 对 n 有指数下界：`ExpLower_2pow Len`；
+2. 对每个 n，都有 `Len n ≤ proofLength (π n)`，
+   也就是 `π n` 的长度至少是 `Len n`。
+
+这里 `π n` 是对公式 `F n` 的 Resolution 反驳。
+-/
+axiom resolutionRefutation_expLower_2pow_hardFamily :
+  ∃ (Len : ActionSeq)
+    (π : ∀ n, Refutes (cnfToRCNF (F n))),
+    ExpLower_2pow Len ∧
+    ∀ n, Len n ≤ proofLength (π n)
+
+/--
+把上面的 Haken 下界和 `exists_simulation` 组合起来：
+
+对 HardCNF_T 族，存在某个 DPLL 作用量序列 `A`，
+它来自于 AbstractDPLL.Model 对 Resolution 反驳的模拟，
+并且满足指数下界 `ExpLower_2pow A`。
+
+这就是你想要的「Action ≥ Length ⇒ 指数下界」在 HardCNF_T 上的
+具体实例版本。
+-/
+theorem exists_hardDPLL_expLower_2pow :
+  ∃ (A : ActionSeq), ExpLower_2pow A := by
+  classical
+  -- 从 Haken 抽象定理中取出 Len、π 以及它们的性质
+  rcases resolutionRefutation_expLower_2pow_hardFamily with
+    ⟨Len, π, hLower, hLen_le⟩
+
+  -- 用我们在 Section 12 定义的 actionSeqOfFamily 来从 π 构造
+  -- 对应的 DPLL 作用量族 A
+  let A : ActionSeq :=
+    actionSeqOfFamily
+      (m := HardVarT)
+      (F := F)
+      (π := π)
+
+  have hA : ExpLower_2pow A :=
+    actionSeqOfFamily_expLower
+      (m := HardVarT)
+      (F := F)
+      (π := π)
+      (Len := Len)
+      (hLenLower := hLower)
+      (hLen_le := hLen_le)
+
+  exact ⟨A, hA⟩
+
+end HardFamily
 
 end StructuralAction
+
 
 
 
