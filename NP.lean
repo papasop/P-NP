@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr
+  deriving Repr, DecidableEq   -- ★★ 加上 DecidableEq，修复 Finset.image 的需求
 
 -- 子句：3 个字面
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -199,8 +199,6 @@ lemma to3CNFClause_sound_nonempty
                   -- 先从 h 中把“首个 3-子句为真”拆出来
                   have hTriple :
                       StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
-                    -- h : cnfEval σ (mkClause3 a b c :: to3CNFClause (d::rest)) = true
-                    -- simp 后得到一个 ∧，取 .1 即首子句为真
                     have h' := h
                     simp [to3CNFClause, StructuralAction.cnfEval] at h'
                     exact h'.1
@@ -218,11 +216,9 @@ lemma to3CNFClause_sound_nonempty
                         || StructuralAction.literalEval σ b
                         || StructuralAction.literalEval σ c
                         || genClauseEval σ (d :: rest)) = true := by
-                    -- 对等式 hOr3 两边同时做 “|| genClauseEval σ (d :: rest)”
                     have := congrArg
                       (fun b =>
                         b || genClauseEval σ (d :: rest)) hOr3
-                    -- RHS: true || R = true
                     simpa [Bool.true_or, Bool.or_assoc] using this
                   -- 把 genClauseEval 展开成同样的 OR 结构
                   have hShape :
@@ -234,7 +230,6 @@ lemma to3CNFClause_sound_nonempty
                         || genClauseEval σ (d :: rest)) := by
                     simp [genClauseEval,
                           Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                  -- 用 hOr4 + hShape 得到结论
                   have := hOr4
                   simpa [hShape] using this
 
@@ -730,7 +725,71 @@ lemma pathActionNat_ge_time
 
   simpa [pathActionNat] using h_final
 
+------------------------------------------------------------
+-- 10. Resolution 证明系统的抽象骨架 + HardCNF_T 的解析视角
+------------------------------------------------------------
+
+namespace Resolution
+
+open StructuralAction
+
+/-- 解析系统中的子句：有限集合形式的字面集（无序、无重复）。 -/
+abbrev Clause (n : Nat) := Finset (Literal n)
+
+/-- 解析 CNF 公式：子句的列表。 -/
+abbrev Formula (n : Nat) := List (Clause n)
+
+/-- 字面取反：保留变量索引，只翻转 `neg` 标志。 -/
+def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
+  { var := ℓ.var, neg := !ℓ.neg }
+
+/-- 把结构 3-子句转换成解析子句（Finset），忽略顺序和重复。 -/
+def clauseOfStructClause {n : Nat}
+    (C : StructuralAction.Clause n) : Clause n :=
+  (Finset.univ.image fun i : Fin 3 => C i)
+
+/-- 把结构 CNF（List 的 3-子句）转换成解析 CNF（List 的 Finset 子句）。 -/
+def formulaOfStructCNF {n : Nat}
+    (Φ : StructuralAction.CNF n) : Formula n :=
+  Φ.map clauseOfStructClause
+
+/-- PHP Tseitin 困难族在解析系统里的公式表示。 -/
+noncomputable
+def HardResFormula (n : Nat) : Formula (HardVarT n) :=
+  formulaOfStructCNF (HardCNF_T n)
+
+/-- “Φ 经解析推导出空子句”的谓词（抽象公理化）。 -/
+axiom ResDerivesEmpty : ∀ {n : Nat}, Formula n → Prop
+
+/-- 解析系统对 HardCNF_T 的**语义正确性**：
+    若解析系统从 HardResFormula n 推导出空子句，
+    则 HardCNF_T n 在所有赋值下都为 false。 -/
+axiom resSoundForHardCNF_T :
+  ∀ n : Nat,
+    ResDerivesEmpty (HardResFormula n) →
+    ∀ σ : Assignment (HardVarT n),
+      cnfEval σ (HardCNF_T n) = false
+
+/-- 假设：对于每个 n，HardResFormula n 在解析系统里都有一个 refutation。 -/
+axiom HardCNF_T_hasResolutionRefutation :
+  ∀ n : Nat, ResDerivesEmpty (HardResFormula n)
+
+/-- 由“解析 refutation + 解析 soundness”重新得到 HardCNF_T 的不可满足性。 -/
+theorem HardCNF_T_unsat_via_resolution (n : Nat) :
+  ∀ σ : Assignment (HardVarT n),
+    cnfEval σ (HardCNF_T n) = false := by
+  intro σ
+  -- 解析 refutation 存在：
+  have hRef : ResDerivesEmpty (HardResFormula n) :=
+    HardCNF_T_hasResolutionRefutation n
+  -- 利用 soundness 把 refutation 变成语义上的 UNSAT 结论
+  have hSound := resSoundForHardCNF_T n hRef
+  exact hSound σ
+
+end Resolution
+
 end StructuralAction
+
 
 
 
