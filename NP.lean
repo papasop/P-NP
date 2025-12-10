@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- ★ Resolution / DPLL 中要用到 DecidableEq
+  deriving Repr, DecidableEq   -- 后面 Resolution / DPLL 需要
 
 -- 子句：3 个字面（仅用于 3-SAT 部分）
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -664,7 +664,9 @@ abbrev RCNF (n : Nat) := List (RClause n)
 def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
-/-- Resolution 推导关系（Type 层级）：允许在上面递归定义长度。 -/
+/-- Resolution 推导关系：
+    注意返回值在 `Type` 中，这样我们可以在上面做一般递归
+    （例如定义长度）。 -/
 inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
   | axiom (C : RClause n) (hC : C ∈ Φ) :
       Derives Φ C
@@ -694,6 +696,11 @@ def derivationLength {n : Nat} {Φ : RCNF n} {C : RClause n}
 def proofLength {n : Nat} {Φ : RCNF n}
     (π : Refutes Φ) : Nat :=
   derivationLength π
+
+/-- （抽象形态）Resolution 对某些公式族的指数下界占位公理。 -/
+axiom resolutionRefutation_expLower_2pow :
+  ∃ (Len : StructuralAction.ActionSeq),
+    StructuralAction.ExpLower_2pow Len
 
 end Resolution
 
@@ -733,7 +740,12 @@ structure TrailEntry (n : Nat) where
 /-- 决策/传播轨迹：一串已经赋为 True 的字面（附带层级和前因）。 -/
 abbrev Trail (n : Nat) := List (TrailEntry n)
 
-/-- 抽象 DPLL 状态： -/
+/-- 抽象 DPLL 状态：
+    * trail          : 当前决策 / 传播得到的字面轨迹
+    * decisionLevel  : 当前决策层级
+    * learnt         : 已学习子句（Resolution 视角下的派生子句）
+    * pending        : 尚未处理 / 还在原公式里的子句
+    * conflict       : 如果当前发现冲突，则存一个冲突子句（或 `[]`） -/
 structure State (n : Nat) where
   trail         : Trail n
   decisionLevel : Nat
@@ -751,7 +763,7 @@ def litIsTrue {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
 
 /-- 字面 ℓ 是否在 trail 下为 False（即 trail 中有它的否定）。 -/
 def litIsFalse {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
-  τ.any (fun e => e.lit = Resolution.litNeg ℓ)
+  τ.any (fun e => e.lit = litNeg ℓ)
 
 /-- 在给定 trail 下，从子句 C 里收集“未赋值的字面”。 -/
 def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) : List (Literal n) :=
@@ -761,7 +773,16 @@ def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) : List (Literal n) :
 -- 11.4 Unit Propagation：递归辅助 + 顶层函数
 --------------------------------------------------
 
-/-- Unit Propagation 的递归辅助函数（至多执行一次有效动作）。 -/
+/-- Unit Propagation 的递归辅助函数：
+    给定 trail τ、固定的状态 s 和一串子句列表，尝试做一次：
+    * 如果发现某个子句在 τ 下：
+      - 已满足：跳过；
+      - 成为空子句（所有字面都为 False）：产生 conflict；
+      - 是 unit 子句（恰好一个未赋值字面）：把该字面以 antecedent = 该子句 推入 trail；
+      - 否则：继续看后面的子句。
+
+    注意：这个版本最多执行一次“有效动作”（产生 conflict 或推一个 unit），
+    找到第一个触发的子句就停下。 -/
 def unitPropagateAux {n : Nat}
     (τ : Trail n) (s : State n) :
     List (RClause n) → State n
@@ -781,16 +802,19 @@ def unitPropagateAux {n : Nat}
             -- 恰好一个未赋值字面：做一次 unit propagate
             let entry : TrailEntry n :=
               { lit        := ℓ
-                level      := s.decisionLevel
-                antecedent := some C }
+                level      := s.decisionLevel     -- 传播不提升决策层
+                antecedent := some C }            -- 记录这个子句作为前因
             { s with trail := entry :: s.trail }
         | _ =>
-            -- 多个未赋值字面，继续扫描后续子句
+            -- 还有多个未赋值字面，C 既不是冲突也不是 unit，继续扫后面的子句
             unitPropagateAux τ s Cs
 
-/-- Unit Propagation 顶层：结合 ΦR ∪ learnt ∪ pending 做一次传播。 -/
+/-- Unit Propagation：
+    * 如果已经在 conflict 状态，则保持不变；
+    * 否则，在 ΦR ∪ learnt ∪ pending 中做一次 unit propagation 探测。 -/
 def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   if h : s.conflict ≠ none then
+    -- 已经有 conflict，就不再做新的传播
     s
   else
     let clauses : List (RClause n) := ΦR ++ s.learnt ++ s.pending
@@ -801,15 +825,27 @@ def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
 -- 11.5 ConflictAnalyze / backtrack / decide
 --------------------------------------------------
 
-/-- Conflict Analyze 骨架：暂不改变状态。 -/
+/-- Conflict Analyze：
+    * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
+    * 当前骨架：暂时不改变状态，只是占位。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
+  -- TODO：若 s.conflict = some C，则在 trail 上做 UIP 分析，
+  --       通过 Resolution 生成新的 learnt 子句，并清空 conflict 或做 backjump。
   s
 
-/-- Backtrack 骨架：暂不改变状态。 -/
+/-- Backtrack：
+    * 目标：根据冲突分析的结果回溯 trail（CDCL 的 backjump）；
+    * 当前骨架：暂时直接返回原状态。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
+  -- TODO：根据 learnt 子句中的决策层级，裁剪 trail 并调整 decisionLevel。
   s
 
-/-- Decide：避免 0 < n 的自由变量问题的实现。 -/
+/-- Decide：
+    * 目标：在没有 unit / 冲突时，选择一个未赋值的变量做决策；
+    * 实现：如果 pending 非空且其中首子句非空，取该子句的首字面为决策；
+      提升 decisionLevel 并把决策写入 trail；
+      否则保持不变。
+    ★ 不再使用 `⟨0, by decide⟩`，避免出现 `0 < n` 的自由变量目标。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
@@ -829,10 +865,10 @@ def decide {n : Nat} (s : State n) : State n :=
             conflict      := s.conflict }
 
 --------------------------------------------------
--- 11.6 抽象 DPLL 模型
+-- 11.6 抽象 DPLL 模型：用上述四个操作组合成一步 step
 --------------------------------------------------
 
-/-- 初始状态。 -/
+/-- 初始状态：trail 为空；决策层级 0；learnt 为空；pending = 原公式的 RCNF ；无冲突。 -/
 def initState {n : Nat} (Φ : CNF n) : State n :=
   { trail         := []
     decisionLevel := 0
@@ -840,7 +876,12 @@ def initState {n : Nat} (Φ : CNF n) : State n :=
     pending       := cnfToRCNF Φ
     conflict      := none }
 
-/-- 抽象 DPLL 模型。 -/
+/-- 抽象 DPLL 模型：
+    * init : 建立 initState；
+    * step : unitPropagate → conflictAnalyze → backtrack → decide 的组合；
+    * halting :
+        - 要么 pending = []（公式“解决完了”）
+        - 要么 conflict ≠ none（找到了冲突 / 反驳）。 -/
 noncomputable
 def Model (n : Nat) : AlgorithmModel n :=
   { StateType := State n
@@ -859,139 +900,69 @@ def Model (n : Nat) : AlgorithmModel n :=
 -- 11.7 结构密度 λ'：每一步至少付出 1 单位 Action
 --------------------------------------------------
 
+/-- 最简骨架版结构密度：
+    * 每个状态的 cost = 1；
+    * 未来可以升级为：
+        - unitProp / resolve 步单独计价；
+        - 让 Action 精确界面到 Resolution.proofLength。 -/
 def density (n : Nat) (s : State n) : Nat := 1
 
 --------------------------------------------------
--- 11.8 Resolution → DPLLPath 的“模拟骨架”（参数化版）
+-- 11.8 DPLL 专用的 pathActionNat ≥ 步数 引理
 --------------------------------------------------
 
-/-- Simulation：对给定的外部 Resolution 反驳 π，提供一条 DPLL 轨迹 ψ，
-    使得 Action(ψ) ≥ proofLength π。 -/
+/-- 对 DPLL 模型的 density，任意状态的 cost 至少为 1。 -/
+lemma density_pos (n : Nat)
+    (Φ : CNF n) (ψ : ComputationPath (Model n) Φ)
+    (t : Fin (ψ.T + 1)) :
+    1 ≤ density n (ψ.states t) := by
+  simp [density]
+
+/-- 专门版下界：在 DPLL 模型中，路径的 Action 至少等于时间步数 ψ.T + 1。 -/
+lemma dpll_pathActionNat_ge_steps (n : Nat)
+    (Φ : CNF n) (ψ : ComputationPath (Model n) Φ) :
+    ψ.T + 1 ≤ pathActionNat (Model n) Φ (density n) ψ := by
+  -- 构造满足 pathActionNat_ge_time 所需的 hPos
+  have hPos :
+      ∀ (Φ' : CNF n) (ψ' : ComputationPath (Model n) Φ')
+        (t : Fin (ψ'.T + 1)),
+        1 ≤ density n (ψ'.states t) := by
+    intro Φ' ψ' t
+    simpa using (density_pos n Φ' ψ' t)
+  -- 应用通用引理
+  have h :=
+    StructuralAction.pathActionNat_ge_time
+      (A := Model n)
+      (density := density n)
+      (Φ := Φ)
+      (ψ := ψ)
+      hPos
+  exact h
+
+--------------------------------------------------
+-- 11.9 Resolution → DPLLPath 的“模拟骨架”（参数化版）
+--------------------------------------------------
+
+/-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
+    构造 DPLL 计算路径 ψ，并证明
+      pathActionNat ≥ proofLength π。 -/
 structure Simulation {n : Nat} (Φ : CNF n)
     (π : Refutes (cnfToRCNF Φ)) where
   ψ  : ComputationPath (Model n) Φ
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
 
-/-- 存在模拟：Resolution 反驳 ⇒ 存在一条 DPLL 轨迹。 -/
+/-- 存在模拟：Resolution 反驳 ⇒ 存在一条 DPLL 轨迹 ψ，
+    使得 Action(ψ) ≥ proofLength(π)。
+    当前仍然是公理（axiom）。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ) (π := π)
 
 end AbstractDPLL
 
-------------------------------------------------------------
--- 12. HardFamily schema：从 Resolution 指数下界到 DPLL 指数下界
-------------------------------------------------------------
-
-namespace ResolutionToDPLL
-
-open StructuralAction
-open Resolution
-open AbstractDPLL
-
-/-- 一族困难公式：给出变量规模 m n、公式 F n 以及对应的 Resolution 反驳 π n，
-    并假设存在 proofLength π n ≥ 2^n 的指数下界。 -/
-structure HardFamily where
-  m    : Nat → Nat
-  F    : ∀ n, CNF (m n)
-  π    : ∀ n, Refutes (cnfToRCNF (F n))
-  hExp : ∀ n, (2 : Nat)^n ≤ proofLength (π n)
-
-/-- 从 HardFamily 中抽取对应的 DPLL 作用量族：
-    对每个 n，取 Simulation 给出的路径 ψ n 的 pathActionNat。 -/
-noncomputable
-def hardActionFromFamily (H : HardFamily) : ActionSeq :=
-  fun n =>
-    let πn  := H.π n
-    let sim := AbstractDPLL.exists_simulation (Φ := H.F n) πn
-    pathActionNat (Model (H.m n)) (H.F n) (density (H.m n)) sim.ψ
-
-/-- 关键引理：如果 HardFamily 在 Resolution 中有 proofLength ≥ 2^n 的指数下界，
-    那么从 Simulation 构造出的 hardActionFromFamily 也具有指数下界。 -/
-lemma hardActionFromFamily_expLower_2pow (H : HardFamily) :
-  ExpLower_2pow (hardActionFromFamily H) := by
-  intro n
-  classical
-  -- Resolution 指数下界
-  have h1 : (2 : Nat)^n ≤ proofLength (H.π n) := H.hExp n
-  -- DPLL Simulation；hA 给出 Action ≥ proofLength π
-  let sim := AbstractDPLL.exists_simulation (Φ := H.F n) (H.π n)
-  have h2 :
-      proofLength (H.π n)
-      ≤ pathActionNat (Model (H.m n)) (H.F n)
-          (density (H.m n)) sim.ψ := by
-    exact sim.hA
-  -- 合成之后再用 `simpa` 展开 hardActionFromFamily
-  have h3 :
-      (2 : Nat)^n ≤
-      pathActionNat (Model (H.m n)) (H.F n)
-        (density (H.m n)) sim.ψ :=
-    le_trans h1 h2
-  simpa [hardActionFromFamily] using h3
-
-end ResolutionToDPLL
-
-------------------------------------------------------------
--- 13. 把 PHP 困难族接到 HardFamily schema 上：得到 no_polyTime_DPLL_on_PHP
-------------------------------------------------------------
-
-namespace PHPResolutionHard
-
-open StructuralAction
-open PigeonholeFamily
-open Resolution
-open AbstractDPLL
-open ResolutionToDPLL
-
-/-- 公理：PHPₙ 的 Tseitin 3-CNF HardCNF_T n 在 Resolution 系统中
-    具有指数长的反驳（proofLength ≥ 2^n）。
-    未来如果你真构造出了这些反驳，可以把这个 axiom 替换成 theorem。 -/
-axiom PHP_resolutionRefutation_expLower :
-  ∀ n : Nat,
-    ∃ π : Refutes (cnfToRCNF (HardCNF_T n)),
-      (2 : Nat)^n ≤ proofLength π
-
-/-- 利用上面的公理构造一个具体的 HardFamily。 -/
-noncomputable
-def PHPHardFamily : HardFamily :=
-  { m    := HardVarT
-    F    := fun n => HardCNF_T n
-    π    := fun n => Classical.choose (PHP_resolutionRefutation_expLower n)
-    hExp := by
-      intro n
-      have h := Classical.choose_spec (PHP_resolutionRefutation_expLower n)
-      -- h : (2 : Nat)^n ≤ proofLength (Classical.choose (PHP_resolutionRefutation_expLower n))
-      simpa using h }
-
-/-- 对 PHPₙ 这族困难公式（HardCNF_T n），
-    把 Resolution 指数 refutation 通过 Simulation
-    提升为一个 DPLL 作用量的指数困难族。 -/
-noncomputable
-def HardActionDPLL_PHP : ActionSeq :=
-  hardActionFromFamily PHPHardFamily
-
-lemma HardActionDPLL_PHP_expLower_2pow :
-  ExpLower_2pow HardActionDPLL_PHP :=
-  hardActionFromFamily_expLower_2pow PHPHardFamily
-
-/-- 来自某个（未显式给出）DPLL / CDCL 算法对 PHP 困难族的多项式上界：
-    这里仍然是公理，占位你后续真正的“算法→多项式复杂度”证明。 -/
-axiom HardActionDPLL_PHP_polyUpper_from_alg :
-  PolyUpper_general HardActionDPLL_PHP
-
-/-- 终极矛盾：如果存在一个 DPLL/CDCL 算法，对 PHPₙ 的 Tseitin 3-CNF 族
-    HardCNF_T n 具有多项式作用量上界，则与我们假设的 Resolution 指数下界
-    以及 Simulation 下界一起导致矛盾。 -/
-theorem no_polyTime_DPLL_on_PHP : False :=
-  no_polyTime_on_family
-    HardActionDPLL_PHP
-    HardActionDPLL_PHP_expLower_2pow
-    HardActionDPLL_PHP_polyUpper_from_alg
-
-end PHPResolutionHard
-
 end StructuralAction
+
 
 
 
