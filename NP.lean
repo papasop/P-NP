@@ -961,8 +961,114 @@ lemma action_ge_time {n : Nat} (Φ : CNF n)
   simpa [action] using h
 
 end AbstractDPLL
+/-! ------------------------------------------------------------
+### 10. TimeModel：一个只负责“计步”的极简算法模型
+
+这个模型完全不关心 SAT / DPLL 细节，只做一件事：
+给你一个路径 ψ，它的状态就是自然数，step 就是 s ↦ s+1。
+------------------------------------------------------------ -/
+
+namespace TimeModel
+
+/-- 极简版本的算法模型：
+    * 状态类型就是 `Nat`
+    * `init Φ = 0`
+    * `step Φ s = s + 1`
+    * `halting Φ s := True`（总是视作“停机”，只是为了满足结构） -/
+def model (n : Nat) : AlgorithmModel n :=
+{ StateType := Nat
+, init      := fun _Φ => 0
+, step      := fun _Φ s => s + 1
+, halting   := fun _Φ _s => True }
+
+/-- 给定一个“目标长度” `L : ℕ`，在 `TimeModel n` 上构造一条路径：  
+    * 总步数 `T = L`
+    * 第 t 个状态就是 `t.1`（从 0 数到 L）
+    * step 恰好是前一个状态加一 -/
+def pathOfLength {n : Nat} (Φ : CNF n) (L : Nat) :
+    ComputationPath (model n) Φ :=
+{ T      := L
+, states := fun t => t.1
+, h_init := by
+    -- t = 0 时，states 0 = 0 = init
+    rfl
+, h_step := by
+    -- 对任意 t < T，states (succ t) = states t + 1
+    intro t
+    -- 左边：states ⟨t.1.succ, _⟩ = t.1.succ
+    -- 右边：step Φ (states ⟨t.1, _⟩) = (states ...) + 1 = t.1 + 1
+    -- 两边都是自然数的后继，所以 rfl。
+    rfl
+, h_halt := by
+    -- halting 恒为 True
+    trivial }
+
+/-- 方便引理：这条路径的时间步数就是你给的 L。 -/
+@[simp]
+lemma pathOfLength_time {n : Nat} (Φ : CNF n) (L : Nat) :
+    (pathOfLength Φ L).T = L := rfl
+
+/-- 再一个方便引理：在第 t 个时间点的状态就是 t.1。 -/
+@[simp]
+lemma pathOfLength_state {n : Nat} (Φ : CNF n) (L : Nat)
+    (t : Fin (L + 1)) :
+    (pathOfLength Φ L).states t = t.1 := rfl
+
+end TimeModel
+
+
+/-! ------------------------------------------------------------
+### 11. Resolution 长度 → DPLLPath 接口骨架
+
+这里我们只提供一个“桥接接口”：
+给定一个“期望长度” L，把它变成 TimeModel 上的一条路径。
+
+将来你在 `namespace Resolution` 里定义好：
+
+* `ResProof n Φ C`
+* `proofLength : ResProof n Φ C → ℕ`
+
+之后，就可以用：
+
+* `ResolutionBridge.fromLength Φ (proofLength π)`
+
+得到一条时间长度 = 证明长度 的路径，然后配合
+`pathActionNat_ge_time` 得到 `Action ≥ proofLength`.
+------------------------------------------------------------ -/
+
+namespace ResolutionBridge
+
+open TimeModel
+
+/-- 把一个“长度” `L` 转换成在 `TimeModel n` 上的一条路径。 -/
+def fromLength {n : Nat} (Φ : CNF n) (L : Nat) :
+    ComputationPath (model n) Φ :=
+  pathOfLength Φ L
+
+/-- 这条路径的时间步数 = L。 -/
+@[simp]
+lemma fromLength_time {n : Nat} (Φ : CNF n) (L : Nat) :
+    (fromLength Φ L).T = L := by
+  simpa [fromLength] using
+    (pathOfLength_time (Φ := Φ) (L := L))
+
+/-- 在时间 t 的状态就是 t.1（同 `pathOfLength_state`）。 -/
+@[simp]
+lemma fromLength_state {n : Nat} (Φ : CNF n) (L : Nat)
+    (t : Fin (L + 1)) :
+    (fromLength Φ L).states t = t.1 := by
+  simpa [fromLength] using
+    (pathOfLength_state (Φ := Φ) (L := L) (t := t))
+
+end ResolutionBridge
 
 end StructuralAction
+
+
+
+
+
+
 
 
 
