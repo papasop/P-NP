@@ -1024,7 +1024,62 @@ lemma hardActionFromFamily_expLower_2pow (H : HardFamily) :
 
 end ResolutionToDPLL
 
+------------------------------------------------------------
+-- 13. 把 HardFamily 具体化为：PHPₙ 的 Tseitin 3-CNF 困难族
+------------------------------------------------------------
+
+namespace PHPResolutionHard
+
+open StructuralAction
+open PigeonholeFamily
+open Resolution
+open AbstractDPLL
+open ResolutionToDPLL
+
+/-- 公理：PHPₙ 的 Tseitin 3-CNF HardCNF_T n 在 Resolution 系统中
+    具有指数长的反驳（proofLength ≥ 2^n）。
+
+    * 这里我们直接对每个 n 提供一个相应的反驳 π n，
+      并要求其长度满足 2^n 下界。
+    * 未来你如果真的构造出了这些反驳，可以把这个 axiom
+      替换成真正的 theorem。 -/
+axiom PHP_resolutionRefutation_expLower :
+  ∀ n : Nat,
+    ∃ π : Refutes (cnfToRCNF (HardCNF_T n)),
+      (2 : Nat)^n ≤ proofLength π
+
+/-- 利用上面的公理构造一个具体的 HardFamily，
+    其中：
+      * m n   = HardVarT n        （PHPₙ Tseitin 后的变量个数）
+      * F n   = HardCNF_T n       （PHPₙ Tseitin 3-CNF）
+      * π n   = 对 cnfToRCNF (HardCNF_T n) 的 Resolution 反驳
+      * hExp  = proofLength (π n) ≥ 2^n。 -/
+noncomputable
+def PHPHardFamily : HardFamily :=
+  { m    := HardVarT
+    F    := fun n => HardCNF_T n
+    π    := fun n => Classical.choose (PHP_resolutionRefutation_expLower n)
+    hExp := by
+      intro n
+      have h := Classical.choose_spec (PHP_resolutionRefutation_expLower n)
+      -- h : (2 : Nat)^n ≤ proofLength (Classical.choose (PHP_resolutionRefutation_expLower n))
+      simpa using h }
+
+/-- 对 PHPₙ 这族困难公式（HardCNF_T n），
+    把 Resolution 指数 refutation 通过 Simulation
+    提升为一个 DPLL 作用量的指数困难族。 -/
+noncomputable
+def HardActionDPLL_PHP : ActionSeq :=
+  hardActionFromFamily PHPHardFamily
+
+lemma HardActionDPLL_PHP_expLower_2pow :
+  ExpLower_2pow HardActionDPLL_PHP :=
+  hardActionFromFamily_expLower_2pow PHPHardFamily
+
+end PHPResolutionHard
+
 end StructuralAction
+
 
 
 
