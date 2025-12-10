@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- ★ 加上 DecidableEq，后面 Resolution 需要
+  deriving Repr, DecidableEq   -- ★ Resolution 需要 DecidableEq
 
 -- 子句：3 个字面（仅用于 3-SAT 部分）
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -41,8 +41,8 @@ def cnfEval {n : Nat} (σ : Assignment n) : CNF n → Bool
   | C :: Φ  => clauseEval σ C && cnfEval σ Φ
 
 -- 满足解集合
-def satSet {n : Nat} (Φ : CNF n) :=
-  { σ : Assignment n | cnfEval σ Φ = true }
+def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
+  { σ | cnfEval σ Φ = true }
 
 ------------------------------------------------------------
 -- 2. 能量函数 energy：未满足子句个数（递归定义）
@@ -720,7 +720,7 @@ end Resolution
 
 namespace AbstractDPLL
 
-open Resolution  -- 我们已经在 namespace StructuralAction 里了
+open Resolution  -- 处于 StructuralAction 命名空间内部
 
 --------------------------------------------------
 -- 11.1 从 3-SAT CNF 转成 Resolution CNF
@@ -758,40 +758,36 @@ structure State (n : Nat) where
 -- 11.3 DPLL/CDCL 的四个核心操作（目前是“类型正确”的骨架”）
 --------------------------------------------------
 
-/-- Unit Propagation：
-    * 目标：在 trail 上进行单子句传播；
-    * 当前骨架：先只保持状态不变，后续逐步填充真正逻辑。 -/
+/-- Unit Propagation 骨架：暂时先保持状态不变。 -/
 def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   -- TODO：扫描 ΦR ∪ learnt，找出 unit clause，
   --       把对应字面加入 trail，更新 conflict / pending。
   s
 
-/-- Conflict Analyze：
-    * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
-    * 当前骨架：暂时不改变状态，只是占位。 -/
+/-- Conflict Analyze 骨架：暂不改变状态。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   -- TODO：若 s.conflict = some C，则在 trail 上做 UIP 分析，
   --       通过 Resolution 生成新的 learnt 子句，并清空 conflict 或做 backjump。
   s
 
-/-- Backtrack：
-    * 目标：根据冲突分析的结果回溯 trail（CDCL 的 backjump）；
-    * 当前骨架：暂时直接返回原状态。 -/
+/-- Backtrack 骨架：暂时直接返回原状态。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
   -- TODO：根据 learnt 子句中的决策层级，裁剪 trail。
   s
 
 /-- Decide：
     * 目标：在没有 unit / 冲突时，选择一个未赋值的变量做决策；
-    * 当前骨架：若 pending 非空，就从第一个子句中取一个真实字面；
-      如果该子句为空，则保持不变。 -/
+    * 安全骨架版：
+        - pending = []            ⇒ 保持不变
+        - pending = C :: _，C=[]  ⇒ 保持不变（退化情况）
+        - pending = C :: _，C≠[]  ⇒ 取 C 的第一个字面作为决策。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
   | C :: _ =>
       match C with
-      | []        => s
-      | lit :: _  =>
+      | [] => s
+      | lit :: _ =>
           { s with trail := lit :: s.trail }
 
 --------------------------------------------------
@@ -837,14 +833,17 @@ def Model (n : Nat) : AlgorithmModel n :=
 def density (n : Nat) (s : State n) : Nat := 1
 
 --------------------------------------------------
--- 11.6 Resolution → DPLLPath 的“模拟骨架”
+-- 11.6 Resolution → DPLLPath 的“模拟骨架”（修正版）
 --------------------------------------------------
 
 /-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
     构造 DPLL 计算路径 ψ，并证明
-      pathActionNat ≥ proofLength π。 -/
-structure Simulation {n : Nat} (Φ : CNF n) where
-  π  : Refutes (cnfToRCNF Φ)
+      pathActionNat ≥ proofLength π。
+
+    注意：这里把 π 作为参数传入，而不是字段存储，
+    这样 exists_simulation 的 hA 就能直接对准外部的 π。 -/
+structure Simulation {n : Nat} (Φ : CNF n)
+    (π : Refutes (cnfToRCNF Φ)) where
   ψ  : ComputationPath (Model n) Φ
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
@@ -856,18 +855,71 @@ structure Simulation {n : Nat} (Φ : CNF n) where
        你的终极目标是把它变成真正的 theorem。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
-  Simulation (Φ := Φ)
-
-/-- 行为下界引理：从 Simulation 结构直接读出
-    Action ≥ Resolution.proofLength。 -/
-theorem action_ge_resProofLength
-  {n : Nat} (Φ : CNF n)
-  (sim : Simulation (Φ := Φ)) :
-  pathActionNat (Model n) Φ (density n) sim.ψ
-    ≥ proofLength sim.π :=
-  sim.hA
+  Simulation (Φ := Φ) (π := π)
 
 end AbstractDPLL
+
+------------------------------------------------------------
+-- 12. Resolution 长度下界 ⇒ DPLL Action 下界 的抽象桥梁
+------------------------------------------------------------
+
+open Resolution
+open AbstractDPLL
+
+/--
+给定一个公式族 `F : ∀ n, CNF (m n)`，以及每个规模 `n` 上的
+Resolution 反驳 `π n : Refutes (cnfToRCNF (F n))`，
+
+我们用 `exists_simulation` 把每个 Resolution 反驳映射成一条
+DPLL 计算路径，并用 `pathActionNat` 定义相应的 Action 族。
+-/
+noncomputable
+def actionSeqOfFamily
+  (m : Nat → Nat)
+  (F : ∀ n, CNF (m n))
+  (π : ∀ n, Refutes (cnfToRCNF (F n))) : ActionSeq :=
+  fun n =>
+    let sim := exists_simulation (Φ := F n) (π := π n)
+    pathActionNat (Model (m n)) (F n) (density (m n)) sim.ψ
+
+/--
+如果我们已经知道某个 Action 序列 `Len` 对应的 Resolution 反驳长度
+满足指数下界 `ExpLower_2pow Len`，并且 `Len n ≤ proofLength (π n)`，
+
+那么由 `exists_simulation` 可得：
+`actionSeqOfFamily m F π` 也满足指数下界 `ExpLower_2pow`。
+
+这是「Resolution 长度下界 ⇒ DPLL 结构作用量下界」的抽象桥梁。 -/
+lemma actionSeqOfFamily_expLower
+  (m : Nat → Nat)
+  (F : ∀ n, CNF (m n))
+  (π : ∀ n, Refutes (cnfToRCNF (F n)))
+  (Len : ActionSeq)
+  (hLenLower : ExpLower_2pow Len)
+  (hLen_le : ∀ n, Len n ≤ proofLength (π n)) :
+  ExpLower_2pow (actionSeqOfFamily m F π) := by
+  intro n
+  classical
+  -- 1. 由假设得到：2^n ≤ Len n ≤ proofLength (π n)
+  have h1 : (2 : Nat)^n ≤ Len n := hLenLower n
+  have h2 : Len n ≤ proofLength (π n) := hLen_le n
+  have h3 : (2 : Nat)^n ≤ proofLength (π n) :=
+    Nat.le_trans h1 h2
+
+  -- 2. 由 exists_simulation 得到：proofLength (π n) ≤ Action(ψₙ)
+  let sim := exists_simulation (Φ := F n) (π := π n)
+  have h4 :
+      proofLength (π n)
+        ≤ pathActionNat (Model (m n)) (F n) (density (m n)) sim.ψ :=
+    sim.hA
+
+  -- 3. 合并两段不等式，得到最终的指数下界
+  have : (2 : Nat)^n ≤
+      pathActionNat (Model (m n)) (F n) (density (m n)) sim.ψ :=
+    Nat.le_trans h3 h4
+
+  -- 4. 把右边展开成 actionSeqOfFamily 的定义
+  simpa [actionSeqOfFamily] using this
 
 end StructuralAction
 
