@@ -15,9 +15,9 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- ★ 加上 DecidableEq，方便后面 Resolution 使用
+  deriving Repr, DecidableEq   -- ★ 加上 DecidableEq，后面 Resolution 需要
 
--- 子句：3 个字面
+-- 子句：3 个字面（仅用于 3-SAT 部分）
 abbrev Clause (n : Nat) := Fin 3 → Literal n
 
 -- CNF 公式：子句列表
@@ -60,14 +60,12 @@ lemma cnfEval_true_iff_energy_zero
     cnfEval σ Φ = true ↔ energy Φ σ = 0 := by
   induction Φ with
   | nil =>
-      -- Φ = []
       simp [cnfEval, energy]
   | cons C Φ ih =>
       classical
       by_cases hC : clauseEval σ C = true
-      · -- 子句 C 为真：等价关系归约到尾部 Φ
-        simp [cnfEval, energy, hC, ih]
-      · -- 子句 C 为假：整个公式为假，能量至少为 1
+      · simp [cnfEval, energy, hC, ih]
+      ·
         have hC' : clauseEval σ C = false := by
           cases h' : clauseEval σ C <;> simp [h', hC] at *
         simp [cnfEval, energy, hC', ih]
@@ -135,9 +133,7 @@ lemma to3CNFClause_sound_nonempty
   | cons a tail =>
       cases tail with
       | nil =>
-          ----------------------------------------------------
           -- Γ = [a]
-          ----------------------------------------------------
           have hTriple :
               StructuralAction.clauseEval σ (mkClause3 a a a) = true := by
             simpa [to3CNFClause, StructuralAction.cnfEval] using h
@@ -148,9 +144,7 @@ lemma to3CNFClause_sound_nonempty
       | cons b tail2 =>
           cases tail2 with
           | nil =>
-              ------------------------------------------------
               -- Γ = [a, b]
-              ------------------------------------------------
               have hTriple :
                   StructuralAction.clauseEval σ (mkClause3 a a b) = true := by
                 simpa [to3CNFClause, StructuralAction.cnfEval] using h
@@ -166,9 +160,7 @@ lemma to3CNFClause_sound_nonempty
           | cons c tail3 =>
               cases tail3 with
               | nil =>
-                  --------------------------------------------
                   -- Γ = [a, b, c]
-                  --------------------------------------------
                   have hTriple :
                       StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
                     simpa [to3CNFClause, StructuralAction.cnfEval] using h
@@ -181,9 +173,7 @@ lemma to3CNFClause_sound_nonempty
                          Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
                     using hOr
               | cons d rest =>
-                  --------------------------------------------
                   -- Γ = a :: b :: c :: d :: rest  （长度 ≥ 4）
-                  --------------------------------------------
                   have hTriple :
                       StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
                     have h' := h
@@ -235,7 +225,7 @@ section Tseitin
 
 -- Tseitin 转换的结果：
 --   原公式有 n 个变量，Tseitin 之后有 n + auxVars 个变量，
---   并给出一个 3-CNF（Clause 统一本在 CNF (n + auxVars) 上）。
+--   并给出一个 3-CNF。
 structure TseitinResult (n : Nat) where
   auxVars : Nat
   cnf     : StructuralAction.CNF (n + auxVars)
@@ -259,28 +249,20 @@ def liftGenClause {n aux : Nat}
     (Γ : GenClause n) : GenClause (n + aux) :=
   Γ.map (fun ℓ => liftLiteral (n := n) (aux := aux) ℓ)
 
-/-
-  真正的 Tseitin 将会在这里引入 fresh 变量并构造 3-CNF。
-  目前骨架版本先不引入新变量，只是保持接口形状：
-  auxVars = 0，cnf = to3CNF Φ。
--/
-
--- 单个变长子句的 Tseitin 3-CNF 编码（目前未使用，先保留骨架）
+/- 真正的 Tseitin 会引入 fresh 变量。这里仍然用骨架占位： -/
 noncomputable
 def tseitinOfGenClause {n : Nat}
     (Γ : GenClause n) : TseitinResult n :=
   { auxVars := 0
   , cnf     := to3CNFClause Γ }
 
--- 整个 GenCNF 的 Tseitin 3-CNF 编码（骨架版：直接用 to3CNF）
 noncomputable
 def tseitinOfGenCNF {n : Nat}
     (Φ : GenCNF n) : TseitinResult n :=
   { auxVars := 0
   , cnf     := to3CNF Φ }
 
-/-- Tseitin 方向 1：
-    若原始 GenCNF 可满足，则 Tseitin 3-CNF 也可满足。 -/
+/-- Tseitin 方向 1：GenCNF SAT ⇒ Tseitin CNF SAT -/
 lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
   (∃ σ : StructuralAction.Assignment n,
       genCNFEval σ Φ = true)
@@ -295,8 +277,7 @@ lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
     (to3CNF_equisat (Φ := Φ) (σ := σ)).mp hσ
   simpa [tseitinOfGenCNF] using hCnf
 
-/-- Tseitin 方向 2：
-    若 Tseitin 3-CNF 可满足，则原始 GenCNF 也可满足。 -/
+/-- Tseitin 方向 2：Tseitin CNF SAT ⇒ GenCNF SAT -/
 lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
       StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
@@ -519,8 +500,7 @@ noncomputable
 def HardCNF_T (n : Nat) : CNF (HardVarT n) :=
   (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf
 
-/-- Tseitin 版困难族公式不可满足：
-    对任意赋值 σ' : Assignment (HardVarT n)，HardCNF_T n 的值恒为 false。 -/
+/-- Tseitin 版困难族公式不可满足： -/
 lemma HardCNF_T_unsat (n : Nat) :
   ∀ σ' : Assignment (HardVarT n),
     cnfEval σ' (HardCNF_T n) = false := by
@@ -534,19 +514,15 @@ lemma HardCNF_T_unsat (n : Nat) :
           cnfEval σ'' (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf = true := by
       refine ⟨σ', ?_⟩
       simpa [HardCNF_T, HardVarT] using hSat
-
     have hGenSat :
         ∃ σ₀ : Assignment (PHPVar n),
           genCNFEval σ₀ (PHP_fullGenCNF n) = true :=
       genSat_of_tseitin_sat (Φ := PHP_fullGenCNF n) hSatExist
-
     exact hUnsatGen hGenSat
-
   have hOr :
       cnfEval σ' (HardCNF_T n) = true ∨
       cnfEval σ' (HardCNF_T n) = false := by
     cases h : cnfEval σ' (HardCNF_T n) <;> simp [h]
-
   cases hOr with
   | inl hTrue =>
       exact False.elim (hNotSat hTrue)
@@ -596,12 +572,9 @@ theorem no_polyTime_on_family
 -- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族（抽象）
 ------------------------------------------------------------
 
--- 这里保留原来的 DPLL 作用量抽象序列与公理。
 axiom HardActionDPLL : ActionSeq
-
 axiom hardActionDPLL_expLower_2pow :
   ExpLower_2pow HardActionDPLL
-
 axiom hardActionDPLL_polyUpper_from_alg :
   PolyUpper_general HardActionDPLL
 
@@ -653,7 +626,6 @@ lemma pathActionNat_ge_time
   have h_each : ∀ t : Fin (ψ.T + 1),
       1 ≤ density (ψ.states t) :=
     fun t => hPos Φ ψ t
-
   have h_sum_le :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
       ≤
@@ -662,7 +634,6 @@ lemma pathActionNat_ge_time
     refine Finset.sum_le_sum ?h
     intro t ht
     exact h_each t
-
   have h_sum_const :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
         = ψ.T + 1 := by
@@ -678,69 +649,73 @@ lemma pathActionNat_ge_time
         (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
       simpa [Finset.card_univ, Fintype.card_fin]
     simpa [h_card] using h0
-
   have h_final :
       ψ.T + 1 ≤
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum
         (fun t => density (ψ.states t)) := by
     simpa [h_sum_const] using h_sum_le
-
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 系统 + proofLength（干净可递归版本）
+-- 10. Resolution 系统（修正版：RClause = List (Literal n)）
 ------------------------------------------------------------
 
 namespace Resolution
 
 open StructuralAction
 
-/-- Resolution 子句、公式直接复用 3-CNF 里的类型。 -/
-abbrev RClause (n : Nat) := StructuralAction.Clause n
-abbrev RCNF   (n : Nat) := StructuralAction.CNF n
+/-- Resolution 子句：任意长度的字面列表（可以是空子句）。 -/
+abbrev RClause (n : Nat) := List (Literal n)
+
+/-- Resolution 公式：子句列表。 -/
+abbrev RCNF (n : Nat) := List (RClause n)
+
+/-- 字面取反：只翻转 neg 位，变量索引不变。 -/
+def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
+  { var := ℓ.var, neg := !ℓ.neg }
 
 /-- Resolution 推导关系：
-    注意这里目标是 `Type` 而不是 `Prop`，
-    这样我们可以在上面做一般递归，定义长度等数值函数。 -/
+    注意返回值在 `Type` 中，这样我们可以在上面做一般递归
+    （例如定义长度）。 -/
 inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
   | axiom (C : RClause n) (hC : C ∈ Φ) :
       Derives Φ C
   | weaken (C C' : RClause n)
-      (hSub : True) (hC' : Derives Φ C') :
+      (hSub : ∀ ℓ, ℓ ∈ C' → ℓ ∈ C)
+      (hC' : Derives Φ C') :
       Derives Φ C
-  | resolve (C D : RClause n)
-      (hC : Derives Φ C) (hD : Derives Φ D) :
-      Derives Φ C
-      -- 简化版：只保留 C，忽略真正 resolvent 结构；
-      -- 以后你可以在这里换成真正的解析子句构造。
+  | resolve (C D : RClause n) (ℓ : Literal n)
+      (hC : Derives Φ (ℓ :: C))
+      (hD : Derives Φ (litNeg ℓ :: D)) :
+      Derives Φ (C ++ D)
 
-/-- 一个“反驳”：给定公式 Φ，得到了某个子句及其导出证明。 -/
+/-- 一个反驳：导出了空子句 []。 -/
 def Refutes {n : Nat} (Φ : RCNF n) : Type :=
-  Σ C : RClause n, Derives Φ C
+  Derives Φ ([] : RClause n)
 
 /-- 单个 Resolution 推导树的“长度”（节点数）。 -/
 def derivationLength {n : Nat} {Φ : RCNF n} {C : RClause n}
     (h : Derives Φ C) : Nat :=
   match h with
-  | Derives.axiom _ _         => 1
-  | Derives.weaken _ _ _ h'   => derivationLength h'
-  | Derives.resolve _ _ h₁ h₂ =>
+  | Derives.axiom _ _           => 1
+  | Derives.weaken _ _ _ h'     => derivationLength h'
+  | Derives.resolve _ _ _ h₁ h₂ =>
       derivationLength h₁ + derivationLength h₂ + 1
 
 /-- 一个反驳的长度：就是其内部导出证明的长度。 -/
 def proofLength {n : Nat} {Φ : RCNF n}
     (π : Refutes Φ) : Nat :=
-  derivationLength π.2
+  derivationLength π
 
-/-- （抽象形态）Resolution 对 HardCNF_T 的指数下界：
-    在这里先作为一个公理占位，未来可以由 Haken 等结果替代。 -/
+/-- （抽象形态）Resolution 对某些公式族的指数下界占位公理。 -/
 axiom resolutionRefutation_expLower_2pow :
-  ∃ (Len : ActionSeq),
-    ExpLower_2pow Len
+  ∃ (Len : StructuralAction.ActionSeq),
+    StructuralAction.ExpLower_2pow Len
 
 end Resolution
 
 end StructuralAction
+
 
 
 
