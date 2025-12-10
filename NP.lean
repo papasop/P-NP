@@ -69,13 +69,8 @@ lemma cnfEval_true_iff_energy_zero
       · -- 子句 C 为真：等价关系归约到尾部 Φ
         simp [cnfEval, energy, hC, ih]
       · -- 子句 C 为假：整个公式为假，能量至少为 1
-        -- 先把 clauseEval σ C = false 记下来，方便 simp
         have hC' : clauseEval σ C = false := by
           cases h' : clauseEval σ C <;> simp [h', hC] at *
-        -- 此时：
-        --   cnfEval σ (C :: Φ) = (false && cnfEval σ Φ) = false
-        --   energy  (C :: Φ) σ = energy Φ σ + 1 ≥ 1
-        -- 两边命题都为 False，直接用 simp 化成 False ↔ False
         simp [cnfEval, energy, hC', ih]
 
 -- 满足 ↔ 能量为 0
@@ -124,6 +119,128 @@ def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
   | [a, b, c] => [mkClause3 a b c]
   | a :: b :: c :: rest =>
       mkClause3 a b c :: to3CNFClause rest
+
+------------------------------------------------------------
+-- 3a. 单个子句的 3-SAT 转换：soundness（非空子句）
+--     若 Γ 非空，且 to3CNFClause Γ 在 σ 下为真，
+--     则原始变长子句 Γ 在 σ 下也为真。
+------------------------------------------------------------
+
+lemma to3CNFClause_sound_nonempty
+    {n : Nat} (σ : StructuralAction.Assignment n) :
+  ∀ Γ : GenClause n,
+    Γ ≠ [] →
+    StructuralAction.cnfEval σ (to3CNFClause Γ) = true →
+    genClauseEval σ Γ = true := by
+  classical
+  intro Γ hne h
+  -- 对 Γ 按长度分类：[], [a], [a,b], [a,b,c], ≥ 4
+  cases Γ with
+  | nil =>
+      -- Γ = [] 与“非空”假设矛盾
+      cases hne rfl
+  | cons a tail =>
+      cases tail with
+      | nil =>
+          ----------------------------------------------------
+          -- 情况 1：Γ = [a]
+          ----------------------------------------------------
+          have hTriple :
+              StructuralAction.clauseEval σ (mkClause3 a a a) = true := by
+            -- cnfEval σ [mkClause3 a a a] = clauseEval σ (mkClause3 a a a)
+            simpa [to3CNFClause, StructuralAction.cnfEval] using h
+          -- clauseEval (a,a,a) 就是 literalEval a
+          have hLit :
+              StructuralAction.literalEval σ a = true := by
+            simpa [StructuralAction.clauseEval, mkClause3] using hTriple
+          -- 一元子句的 genClauseEval 就是 literalEval a
+          simpa [genClauseEval, hLit]
+      | cons b tail2 =>
+          cases tail2 with
+          | nil =>
+              ------------------------------------------------
+              -- 情况 2：Γ = [a, b]
+              ------------------------------------------------
+              have hTriple :
+                  StructuralAction.clauseEval σ (mkClause3 a a b) = true := by
+                -- to3CNFClause [a,b] = [mkClause3 a a b]
+                simpa [to3CNFClause, StructuralAction.cnfEval] using h
+              -- clauseEval (a,a,b) = (la || la || lb) ≃ (la || lb)
+              have hOr :
+                  (StructuralAction.literalEval σ a
+                    || StructuralAction.literalEval σ b) = true := by
+                simpa [StructuralAction.clauseEval, mkClause3,
+                       Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
+                  using hTriple
+              -- genClauseEval σ [a,b] = la || lb
+              simpa [genClauseEval,
+                     Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
+                using hOr
+          | cons c tail3 =>
+              cases tail3 with
+              | nil =>
+                  --------------------------------------------
+                  -- 情况 3：Γ = [a, b, c]
+                  --------------------------------------------
+                  have hTriple :
+                      StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
+                    -- to3CNFClause [a,b,c] = [mkClause3 a b c]
+                    simpa [to3CNFClause, StructuralAction.cnfEval] using h
+                  -- clauseEval (a,b,c) = la || lb || lc
+                  have hOr :
+                      (StructuralAction.literalEval σ a
+                        || StructuralAction.literalEval σ b
+                        || StructuralAction.literalEval σ c) = true := by
+                    simpa [StructuralAction.clauseEval, mkClause3] using hTriple
+                  -- genClauseEval σ [a,b,c] = la || lb || lc
+                  simpa [genClauseEval,
+                         Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
+                    using hOr
+              | cons d rest =>
+                  --------------------------------------------
+                  -- 情况 4：Γ = a :: b :: c :: d :: rest  （长度 ≥ 4）
+                  --------------------------------------------
+                  -- 先从 h 中把“首个 3-子句为真”拆出来
+                  have hTriple :
+                      StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
+                    -- h : cnfEval σ (mkClause3 a b c :: to3CNFClause (d::rest)) = true
+                    -- simp 后得到一个 ∧，取 .1 即首子句为真
+                    have h' := h
+                    simp [to3CNFClause, StructuralAction.cnfEval] at h'
+                    exact h'.1
+                  -- 提取前三个字面的 OR = true
+                  have hOr3 :
+                      (StructuralAction.literalEval σ a
+                        || StructuralAction.literalEval σ b
+                        || StructuralAction.literalEval σ c) = true := by
+                    simpa [StructuralAction.clauseEval, mkClause3,
+                           Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
+                      using hTriple
+                  -- 把“前三个字面为真”的信息延伸到包含尾巴的 OR：
+                  have hOr4 :
+                      (StructuralAction.literalEval σ a
+                        || StructuralAction.literalEval σ b
+                        || StructuralAction.literalEval σ c
+                        || genClauseEval σ (d :: rest)) = true := by
+                    -- 对等式 hOr3 两边同时做 “|| genClauseEval σ (d :: rest)”
+                    have := congrArg
+                      (fun b =>
+                        b || genClauseEval σ (d :: rest)) hOr3
+                    -- RHS: true || R = true
+                    simpa [Bool.true_or, Bool.or_assoc] using this
+                  -- 把 genClauseEval 展开成同样的 OR 结构
+                  have hShape :
+                      genClauseEval σ (a :: b :: c :: d :: rest)
+                        =
+                      (StructuralAction.literalEval σ a
+                        || StructuralAction.literalEval σ b
+                        || StructuralAction.literalEval σ c
+                        || genClauseEval σ (d :: rest)) := by
+                    simp [genClauseEval,
+                          Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
+                  -- 用 hOr4 + hShape 得到结论
+                  have := hOr4
+                  simpa [hShape] using this
 
 -- 3-SAT 转换：对每个一般子句做 to3CNFClause，然后拼接
 def to3CNF {n : Nat} (Φ : GenCNF n) : StructuralAction.CNF n :=
