@@ -1039,9 +1039,39 @@ lemma expLower_lift_from_res_to_dpll
 end HardFamilySchema
 
 end StructuralAction
+namespace StructuralAction
+
+open Resolution
+open AbstractDPLL
+
+/-- 把 “Resolution 困难族在证明长度上有指数下界”
+    和 “对应的 DPLL 作用量族有多项式上界” 拼在一起，
+    得到矛盾。
+
+    解释：
+    * H : HardFamily    — 给出每个规模 n 的 CNF F n 及其 Resolution 反驳 π n；
+    * hRes              — 对长度族 resLengthSeq H 有指数下界 2^n；
+    * hUpper            — 对 DPLL 作用量族 hardActionFromFamily H 有多项式上界；
+    * 结论 False        — 即不存在这样的多项式上界。 -/
+theorem no_polyTime_DPLL_on_HardFamily
+    (H : HardFamily)
+    (hRes : ExpLower_2pow (resLengthSeq H))
+    (hUpper : PolyUpper_general (hardActionFromFamily H)) :
+    False :=
+  by
+    -- 用第 12 节的提升引理，把 Resolution 的指数下界搬到 DPLL 侧
+    have hLowerDPLL : ExpLower_2pow (hardActionFromFamily H) :=
+      expLower_lift_from_res_to_dpll H hRes
+    -- 套用第 7 节的 toy_hardFamily_contradiction schema
+    exact
+      no_polyTime_on_family
+        (A      := hardActionFromFamily H)
+        (hLower := hLowerDPLL)
+        (hUpper := hUpper)
 
 end StructuralAction
 
+end StructuralAction
 
 
 
