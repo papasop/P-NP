@@ -960,11 +960,87 @@ axiom exists_simulation {n : Nat} (Φ : CNF n)
   Simulation (Φ := Φ) (π := π)
 
 end AbstractDPLL
+------------------------------------------------------------
+-- 12. Resolution-hard family → DPLL-hard action family
+------------------------------------------------------------
+
+namespace StructuralAction
+
+section HardFamilySchema
+
+open Resolution
+open AbstractDPLL
+
+/-- 一个抽象的 “Resolution 困难族”：
+    * m : 每个规模 n 对应的变量个数 m n；
+    * F : 每个 n 的 CNF 公式 F n : CNF (m n)；
+    * π : 每个 F n 的一个 Resolution 反驳（Refutes）。 -/
+structure HardFamily where
+  m : Nat → Nat
+  F : ∀ n, CNF (m n)
+  π : ∀ n, Resolution.Refutes (AbstractDPLL.cnfToRCNF (F n))
+
+/-- 把每个 n 的 Resolution 反驳长度视为一个作用量族。 -/
+def resLengthSeq (H : HardFamily) : ActionSeq :=
+  fun n => Resolution.proofLength (H.π n)
+
+/-- 从一个 Resolution 困难族 H 构造对应的 DPLL 作用量族：
+    对每个 n，取 exists_simulation 给出的 DPLL 轨迹 ψ_n 的 pathActionNat。 -/
+noncomputable
+def hardActionFromFamily (H : HardFamily) : ActionSeq :=
+  fun n =>
+    let sim :=
+      AbstractDPLL.exists_simulation
+        (Φ := H.F n)
+        (π := H.π n)
+    pathActionNat
+      (AbstractDPLL.Model (H.m n))
+      (H.F n)
+      (AbstractDPLL.density (H.m n))
+      sim.ψ
+
+/-- 对每个 n，DPLL 作用量 ≥ 对应的 Resolution 反驳长度。 -/
+lemma hardActionFromFamily_ge_resLength (H : HardFamily) :
+  ∀ n, resLengthSeq H n ≤ hardActionFromFamily H n := by
+  intro n
+  classical
+  -- 固定 n 下的模拟
+  let sim :=
+    AbstractDPLL.exists_simulation
+      (Φ := H.F n)
+      (π := H.π n)
+  -- 把目标改写成关于 sim 的形式
+  change
+    Resolution.proofLength (H.π n)
+      ≤
+    pathActionNat
+      (AbstractDPLL.Model (H.m n))
+      (H.F n)
+      (AbstractDPLL.density (H.m n))
+      sim.ψ
+  -- 这正是 Simulation.hA 的内容（注意 ≥ 的定义就是 ≤ 反向）
+  exact sim.hA
+
+/-- 若某个 HardFamily 的 Resolution 反驳族存在指数下界，
+    则对应的 DPLL 作用量族也存在指数下界。 -/
+lemma expLower_lift_from_res_to_dpll
+    (H : HardFamily)
+    (hRes : ExpLower_2pow (resLengthSeq H)) :
+    ExpLower_2pow (hardActionFromFamily H) := by
+  intro n
+  -- Resolution 侧：2^n ≤ proofLength(π n)
+  have h1 : (2 : Nat)^n ≤ resLengthSeq H n := hRes n
+  -- Simulation 侧：proofLength(π n) ≤ DPLL Action(n)
+  have h2 : resLengthSeq H n ≤ hardActionFromFamily H n :=
+    hardActionFromFamily_ge_resLength H n
+  -- 合成得到指数下界提升
+  exact le_trans h1 h2
+
+end HardFamilySchema
 
 end StructuralAction
 
-
-
+end StructuralAction
 
 
 
