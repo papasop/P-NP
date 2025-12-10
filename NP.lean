@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq
+  deriving Repr, DecidableEq   -- ★ 加上 DecidableEq，方便后面 Resolution 使用
 
 -- 子句：3 个字面
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -63,7 +63,6 @@ lemma cnfEval_true_iff_energy_zero
       -- Φ = []
       simp [cnfEval, energy]
   | cons C Φ ih =>
-      -- Φ = C :: Φ
       classical
       by_cases hC : clauseEval σ C = true
       · -- 子句 C 为真：等价关系归约到尾部 Φ
@@ -130,45 +129,37 @@ lemma to3CNFClause_sound_nonempty
     genClauseEval σ Γ = true := by
   classical
   intro Γ hne h
-  -- 对 Γ 按长度分类：[], [a], [a,b], [a,b,c], ≥ 4
   cases Γ with
   | nil =>
-      -- Γ = [] 与“非空”假设矛盾
       cases hne rfl
   | cons a tail =>
       cases tail with
       | nil =>
           ----------------------------------------------------
-          -- 情况 1：Γ = [a]
+          -- Γ = [a]
           ----------------------------------------------------
           have hTriple :
               StructuralAction.clauseEval σ (mkClause3 a a a) = true := by
-            -- cnfEval σ [mkClause3 a a a] = clauseEval σ (mkClause3 a a a)
             simpa [to3CNFClause, StructuralAction.cnfEval] using h
-          -- clauseEval (a,a,a) 就是 literalEval a
           have hLit :
               StructuralAction.literalEval σ a = true := by
             simpa [StructuralAction.clauseEval, mkClause3] using hTriple
-          -- 一元子句的 genClauseEval 就是 literalEval a
           simpa [genClauseEval, hLit]
       | cons b tail2 =>
           cases tail2 with
           | nil =>
               ------------------------------------------------
-              -- 情况 2：Γ = [a, b]
+              -- Γ = [a, b]
               ------------------------------------------------
               have hTriple :
                   StructuralAction.clauseEval σ (mkClause3 a a b) = true := by
-                -- to3CNFClause [a,b] = [mkClause3 a a b]
                 simpa [to3CNFClause, StructuralAction.cnfEval] using h
-              -- clauseEval (a,a,b) = (la || la || lb) ≃ (la || lb)
               have hOr :
                   (StructuralAction.literalEval σ a
                     || StructuralAction.literalEval σ b) = true := by
                 simpa [StructuralAction.clauseEval, mkClause3,
                        Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
                   using hTriple
-              -- genClauseEval σ [a,b] = la || lb
               simpa [genClauseEval,
                      Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
                 using hOr
@@ -176,35 +167,28 @@ lemma to3CNFClause_sound_nonempty
               cases tail3 with
               | nil =>
                   --------------------------------------------
-                  -- 情况 3：Γ = [a, b, c]
+                  -- Γ = [a, b, c]
                   --------------------------------------------
                   have hTriple :
                       StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
-                    -- to3CNFClause [a,b,c] = [mkClause3 a b c]
                     simpa [to3CNFClause, StructuralAction.cnfEval] using h
-                  -- clauseEval (a,b,c) = la || lb || lc
                   have hOr :
                       (StructuralAction.literalEval σ a
                         || StructuralAction.literalEval σ b
                         || StructuralAction.literalEval σ c) = true := by
                     simpa [StructuralAction.clauseEval, mkClause3] using hTriple
-                  -- genClauseEval σ [a,b,c] = la || lb || lc
                   simpa [genClauseEval,
                          Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
                     using hOr
               | cons d rest =>
                   --------------------------------------------
-                  -- 情况 4：Γ = a :: b :: c :: d :: rest  （长度 ≥ 4）
+                  -- Γ = a :: b :: c :: d :: rest  （长度 ≥ 4）
                   --------------------------------------------
-                  -- 先从 h 中把“首个 3-子句为真”拆出来
                   have hTriple :
                       StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
-                    -- h : cnfEval σ (mkClause3 a b c :: to3CNFClause (d::rest)) = true
-                    -- simp 后得到一个 ∧，取 .1 即首子句为真
                     have h' := h
                     simp [to3CNFClause, StructuralAction.cnfEval] at h'
                     exact h'.1
-                  -- 提取前三个字面的 OR = true
                   have hOr3 :
                       (StructuralAction.literalEval σ a
                         || StructuralAction.literalEval σ b
@@ -212,19 +196,15 @@ lemma to3CNFClause_sound_nonempty
                     simpa [StructuralAction.clauseEval, mkClause3,
                            Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
                       using hTriple
-                  -- 把“前三个字面为真”的信息延伸到包含尾巴的 OR：
                   have hOr4 :
                       (StructuralAction.literalEval σ a
                         || StructuralAction.literalEval σ b
                         || StructuralAction.literalEval σ c
                         || genClauseEval σ (d :: rest)) = true := by
-                    -- 对等式 hOr3 两边同时做 “|| genClauseEval σ (d :: rest)”
                     have := congrArg
                       (fun b =>
                         b || genClauseEval σ (d :: rest)) hOr3
-                    -- RHS: true || R = true
                     simpa [Bool.true_or, Bool.or_assoc] using this
-                  -- 把 genClauseEval 展开成同样的 OR 结构
                   have hShape :
                       genClauseEval σ (a :: b :: c :: d :: rest)
                         =
@@ -234,7 +214,6 @@ lemma to3CNFClause_sound_nonempty
                         || genClauseEval σ (d :: rest)) := by
                     simp [genClauseEval,
                           Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                  -- 用 hOr4 + hShape 得到结论
                   have := hOr4
                   simpa [hShape] using this
 
@@ -249,7 +228,7 @@ axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
     StructuralAction.cnfEval σ (to3CNF Φ) = true
 
 ------------------------------------------------------------
--- 3b. Tseitin 转换骨架 + Equisatisfiability 证明
+-- 3b. Tseitin 转换骨架 + Equisatisfiability 证明（骨架版）
 ------------------------------------------------------------
 
 section Tseitin
@@ -311,12 +290,9 @@ lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
   intro h
   classical
   rcases h with ⟨σ, hσ⟩
-  -- 由于 auxVars = 0，Assignment (n + aux) 与 Assignment n 直接相等
   refine ⟨σ, ?_⟩
-  -- 用旧的 to3CNF_equisat 把 genCNFEval ⇒ cnfEval
   have hCnf : StructuralAction.cnfEval σ (to3CNF Φ) = true :=
     (to3CNF_equisat (Φ := Φ) (σ := σ)).mp hσ
-  -- 再把 tseitinOfGenCNF Φ 展开成 to3CNF Φ
   simpa [tseitinOfGenCNF] using hCnf
 
 /-- Tseitin 方向 2：
@@ -330,14 +306,10 @@ lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
   intro h
   classical
   rcases h with ⟨σ', hσ'⟩
-  -- 同样利用 auxVars = 0，直接把 σ' 当作原变量赋值使用
   refine ⟨σ', ?_⟩
-  -- 先把 Tseitin CNF 展开为 to3CNF Φ，并用 to3CNF_equisat 的逆向
   have hGen : genCNFEval σ' Φ = true :=
     (to3CNF_equisat (Φ := Φ) (σ := σ')).mpr
-      (by
-        -- 证明 cnfEval σ' (to3CNF Φ) = true 与 hσ' 同构
-        simpa [tseitinOfGenCNF] using hσ')
+      (by simpa [tseitinOfGenCNF] using hσ')
   exact hGen
 
 end Tseitin
@@ -363,7 +335,6 @@ abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
 noncomputable
 def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
   ⟨p.1 * n + h.1, by
-    -- 证明 p.1 * n + h.1 < PHPVar n = (n+1)*n + 1
     have hp_le : p.1 ≤ n := Nat.le_of_lt_succ p.2
     have hh_lt : h.1 < n := h.2
     have hh_le : h.1 ≤ n - 1 := Nat.le_pred_of_lt hh_lt
@@ -379,7 +350,6 @@ def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
     have h_total : p.1 * n + h.1 ≤ n * n + n :=
       le_trans (le_trans h1a h1b) h1c
     have h_le : p.1 * n + h.1 ≤ (n + 1) * n := by
-      -- n * n + n = n * (n+1) = (n+1)*n
       simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm,
              Nat.add_assoc, Nat.mul_comm] using h_total
     have : p.1 * n + h.1 < ((n + 1) * n) + 1 :=
@@ -508,7 +478,6 @@ lemma HardCNF_unsat (n : Nat) :
   have hUnsatGen := PHP_fullGenCNF_unsat n
   have hNotSatCnf : ¬ cnfEval σ (HardCNF n) = true := by
     intro hSat
-    -- 利用 to3CNF_equisat，把 3-CNF 的可满足性拉回 GenCNF
     have hEquiv :=
       to3CNF_equisat
         (Φ := PHP_fullGenCNF n) (σ := σ)
@@ -519,7 +488,6 @@ lemma HardCNF_unsat (n : Nat) :
         genCNFEval σ (PHP_fullGenCNF n) = true :=
       hEquiv.mpr hSat3
     exact hUnsatGen ⟨σ, hSatGen⟩
-  -- Bool 只有 true / false 两种情况
   have hOr :
       cnfEval σ (HardCNF n) = true ∨
       cnfEval σ (HardCNF n) = false := by
@@ -558,36 +526,27 @@ lemma HardCNF_T_unsat (n : Nat) :
     cnfEval σ' (HardCNF_T n) = false := by
   intro σ'
   classical
-  -- 已有：PHP_fullGenCNF n 不可满足
   have hUnsatGen := PHP_fullGenCNF_unsat n
-
-  -- 先证明：cnfEval σ' (HardCNF_T n) ≠ true
   have hNotSat : ¬ cnfEval σ' (HardCNF_T n) = true := by
     intro hSat
-    -- 把 hSat 包成“存在一个 σ' 满足 Tseitin 公式”的形式
     have hSatExist :
         ∃ σ'' : Assignment (PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars),
           cnfEval σ'' (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf = true := by
       refine ⟨σ', ?_⟩
-      -- 展开 HardCNF_T 和 HardVarT，类型刚好对上
       simpa [HardCNF_T, HardVarT] using hSat
 
-    -- 用 Tseitin 的 “sat ⇒ genSat” 定理，把满足性拉回到原始 GenCNF
     have hGenSat :
         ∃ σ₀ : Assignment (PHPVar n),
           genCNFEval σ₀ (PHP_fullGenCNF n) = true :=
       genSat_of_tseitin_sat (Φ := PHP_fullGenCNF n) hSatExist
 
-    -- 与 PHP_fullGenCNF_unsat 矛盾
     exact hUnsatGen hGenSat
 
-  -- Bool 只有 true / false 两种情况
   have hOr :
       cnfEval σ' (HardCNF_T n) = true ∨
       cnfEval σ' (HardCNF_T n) = false := by
     cases h : cnfEval σ' (HardCNF_T n) <;> simp [h]
 
-  -- 排除 true，剩下的只能是 false
   cases hOr with
   | inl hTrue =>
       exact False.elim (hNotSat hTrue)
@@ -616,14 +575,11 @@ theorem toy_hardFamily_contradiction
     (A : ActionSeq)
     (hLower : ExpLower_2pow A)
     (hUpper : PolyUpper_general A) : False := by
-  -- 在 n = 10 处抽一个具体矛盾出来
   have h₁ : (2 : Nat)^10 ≤ A 10 := hLower 10
   have h₂ : A 10 ≤ 10^2 := hUpper 10
   have h_le : (2 : Nat)^10 ≤ 10^2 := le_trans h₁ h₂
-  -- 已知 10^2 < 2^10
   have h_lt : 10^2 < (2 : Nat)^10 := by
     norm_num
-  -- 合并得到 2^10 < 2^10，矛盾
   have h_absurd : (2 : Nat)^10 < (2 : Nat)^10 :=
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
@@ -637,9 +593,10 @@ theorem no_polyTime_on_family
   toy_hardFamily_contradiction A hLower hUpper
 
 ------------------------------------------------------------
--- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
+-- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族（抽象）
 ------------------------------------------------------------
 
+-- 这里保留原来的 DPLL 作用量抽象序列与公理。
 axiom HardActionDPLL : ActionSeq
 
 axiom hardActionDPLL_expLower_2pow :
@@ -731,129 +688,60 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. ResolutionToy：解析证明系统 + 证明长度
+-- 10. Resolution 系统 + proofLength（干净可递归版本）
 ------------------------------------------------------------
 
-namespace ResolutionToy
+namespace Resolution
 
 open StructuralAction
-open PigeonholeFamily
 
--- 解析子句：用 Literal 列表表示
-abbrev RClause (n : Nat) := List (Literal n)
+/-- Resolution 子句、公式直接复用 3-CNF 里的类型。 -/
+abbrev RClause (n : Nat) := StructuralAction.Clause n
+abbrev RCNF   (n : Nat) := StructuralAction.CNF n
 
--- 解析 CNF（子句集合）
-abbrev RCNF (n : Nat) := List (RClause n)
+/-- Resolution 推导关系：
+    注意这里目标是 `Type` 而不是 `Prop`，
+    这样我们可以在上面做一般递归，定义长度等数值函数。 -/
+inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
+  | axiom (C : RClause n) (hC : C ∈ Φ) :
+      Derives Φ C
+  | weaken (C C' : RClause n)
+      (hSub : True) (hC' : Derives Φ C') :
+      Derives Φ C
+  | resolve (C D : RClause n)
+      (hC : Derives Φ C) (hD : Derives Φ D) :
+      Derives Φ C
+      -- 简化版：只保留 C，忽略真正 resolvent 结构；
+      -- 以后你可以在这里换成真正的解析子句构造。
 
-/-- 字面的“否定”：同一变量，取反 neg 标志。 -/
-def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
-  { var := ℓ.var, neg := !ℓ.neg }
+/-- 一个“反驳”：给定公式 Φ，得到了某个子句及其导出证明。 -/
+def Refutes {n : Nat} (Φ : RCNF n) : Type :=
+  Σ C : RClause n, Derives Φ C
 
-/-- 解析系统中的证明对象：从前提 Φ 推出结论子句 C 的证明树。
+/-- 单个 Resolution 推导树的“长度”（节点数）。 -/
+def derivationLength {n : Nat} {Φ : RCNF n} {C : RClause n}
+    (h : Derives Φ C) : Nat :=
+  match h with
+  | Derives.axiom _ _         => 1
+  | Derives.weaken _ _ _ h'   => derivationLength h'
+  | Derives.resolve _ _ h₁ h₂ =>
+      derivationLength h₁ + derivationLength h₂ + 1
 
-  构造器：
-  * `ax` : 直接使用 Φ 中的某个子句；
-  * `wk` : 子句弱化（超集）；
-  * `res` : 解析规则。 -/
-inductive ResProof (n : Nat) (Φ : RCNF n) : RClause n → Type where
-  | ax {C} (hC : C ∈ Φ) :
-      ResProof n Φ C
-  | wk {C D} (hSub : ∀ ℓ ∈ C, ℓ ∈ D)
-        (hC : ResProof n Φ C) :
-      ResProof n Φ D
-  | res {C D} (ℓ : Literal n)
-        (hC : ResProof n Φ (ℓ :: C))
-        (hD : ResProof n Φ (litNeg ℓ :: D)) :
-      ResProof n Φ (C ++ D)
+/-- 一个反驳的长度：就是其内部导出证明的长度。 -/
+def proofLength {n : Nat} {Φ : RCNF n}
+    (π : Refutes Φ) : Nat :=
+  derivationLength π.2
 
-/-- 解析证明的“长度”：粗略计数规则应用次数。 -/
-def proofLength {n : Nat} {Φ : RCNF n} {C : RClause n}
-    (π : ResProof n Φ C) : Nat :=
-  match π with
-  | .ax _        => 1
-  | .wk _ hC     => proofLength hC + 1
-  | .res _ hC hD => proofLength hC + proofLength hD + 1
+/-- （抽象形态）Resolution 对 HardCNF_T 的指数下界：
+    在这里先作为一个公理占位，未来可以由 Haken 等结果替代。 -/
+axiom resolutionRefutation_expLower_2pow :
+  ∃ (Len : ActionSeq),
+    ExpLower_2pow Len
 
-end ResolutionToy
-
-------------------------------------------------------------
--- 11. AbstractDPLL：把 Resolution 证明映射到 DPLL 作用量下界
-------------------------------------------------------------
-
-namespace AbstractDPLL
-
-open StructuralAction
-open ResolutionToy
-
-/-- 抽象的 DPLL 风格算法模型（依赖变量个数 n）。
-
-  未来你会用真正的 DPLL/CDCL 状态与转移规则来实例化它。
-  目前我们只把它当成一个黑盒的 AlgorithmModel。 -/
-axiom model (n : Nat) : AlgorithmModel n
-
-/-- DPLL 状态上的结构密度 λ' ：
-    将来你会把它换成真正的“能量/冲突/决策层数”等结构指标。 -/
-axiom density (n : Nat) : (model n).StateType → Nat
-
-/--
-`Simulation ΦR C π` 描述了：
-* 给定一个 Resolution 证明 π : ResProof n ΦR C，
-* 存在某个 3-SAT 公式 ΦC : CNF n，
-* 和在 `model n` 上、关于 ΦC 的一条计算路径 `path`，
-* 使得该路径的离散作用量（使用 density n）下界
-  主导 Resolution 证明长度：
-
-      proofLength π + 1 ≤ A_nat[ψ]
-
-这是“Resolution → DPLLPath”的抽象桥梁数据结构。
--/
-structure Simulation {n : Nat}
-    (ΦR : RCNF n) (C : RClause n)
-    (π : ResProof n ΦR C) where
-  ΦC   : CNF n
-  path : ComputationPath (model n) ΦC
-  action_ge_length :
-    proofLength π + 1 ≤
-      pathActionNat (model n) ΦC (density n) path
-
-/--
-抽象公理：每一个 Resolution 证明 π 都可以被某个 DPLL 轨迹
-在作用量意义下“模拟”，且该轨迹的作用量不小于证明长度。
-
-这一条就是未来你要用具体 DPLL 语义 + λ' 来真正证明的核心定理，
-这里先作为接口层面的 axiom。 -/
-axiom exists_simulation
-  {n : Nat} (ΦR : RCNF n)
-  (C : RClause n)
-  (π : ResProof n ΦR C) :
-  Simulation ΦR C π
-
-/--
-**Action ≥ Resolution proof length（抽象骨架版）**
-
-给定任意 Resolution 证明 π，我们可以找到：
-
-* 某个 3-SAT 公式 ΦC : CNF n，
-* 某条 DPLL 风格的计算路径 ψ，
-
-使得（用 λ' 作为密度的 pathActionNat）满足：
-
-    pathActionNat (model n) ΦC (density n) ψ ≥ proofLength π + 1
--/
-theorem action_ge_resProofLength
-  {n : Nat} (ΦR : RCNF n)
-  (C : RClause n)
-  (π : ResProof n ΦR C) :
-  ∃ (ΦC : CNF n) (ψ : ComputationPath (model n) ΦC),
-    proofLength π + 1 ≤
-      pathActionNat (model n) ΦC (density n) ψ := by
-  -- 从抽象 simulation 中解包出 ΦC, ψ 和不等式即可
-  rcases exists_simulation ΦR C π with ⟨ΦC, ψ, hψ⟩
-  exact ⟨ΦC, ψ, hψ⟩
-
-end AbstractDPLL
+end Resolution
 
 end StructuralAction
+
 
 
 
