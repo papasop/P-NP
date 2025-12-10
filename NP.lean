@@ -787,13 +787,15 @@ abbrev Trail (n : Nat) := List (TrailEntry n)
     * decisionLevel  : 当前决策层级
     * learnt         : 已学习子句（Resolution 视角下的派生子句）
     * pending        : 尚未处理 / 还在原公式里的子句
-    * conflict       : 如果当前发现冲突，则存一个冲突子句（或 `[]`） -/
+    * conflict       : 如果当前发现冲突，则存一个冲突子句（或 `[]`）
+    * resSteps       : 本次 step 中 ConflictAnalyze 所用的 Resolution 步数。 -/
 structure State (n : Nat) where
   trail         : Trail n
   decisionLevel : Nat
   learnt        : RCNF n
   pending       : RCNF n
   conflict      : Option (RClause n)
+  resSteps      : Nat
 
 --------------------------------------------------
 -- 11.2' Trail 反向查找：根据字面找 antecedent
@@ -832,16 +834,7 @@ def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) :
 -- 11.4 Unit Propagation：递归辅助 + 顶层函数
 --------------------------------------------------
 
-/-- Unit Propagation 的递归辅助函数：
-    给定 trail τ、固定的状态 s 和一串子句列表，尝试做一次：
-    * 如果发现某个子句在 τ 下：
-      - 已满足：跳过；
-      - 成为空子句（所有字面都为 False）：产生 conflict；
-      - 是 unit 子句（恰好一个未赋值字面）：把该字面以 antecedent = 该子句 推入 trail；
-      - 否则：继续看后面的子句。
-
-    注意：这个版本最多执行一次“有效动作”（产生 conflict 或推一个 unit），
-    找到第一个触发的子句就停下。 -/
+/-- Unit Propagation 的递归辅助函数：最多触发一次动作。 -/
 def unitPropagateAux {n : Nat}
     (τ : Trail n) (s : State n) :
     List (RClause n) → State n
@@ -884,15 +877,45 @@ def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
 -- 11.5 ConflictAnalyze / backtrack / decide
 --------------------------------------------------
 
-/-- Conflict Analyze：
-    * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
-    * 当前骨架：暂时不改变状态，只是占位。 -/
-def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
-  -- TODO：在这里使用 `findAntecedent` 与 `Resolution.resolveOneStep`
-  --       实现真正的冲突分析与学习子句逻辑。
-  s
+/-- 内部递归：从当前冲突子句出发，沿着 Trail 反向做 Resolution，
+    累积当前子句与使用的 Resolution 步数。 -/
+private def conflictAnalyzeLoop {n : Nat}
+    (τ : Trail n) (current : RClause n) (steps : Nat) :
+    Nat × RClause n :=
+  match τ with
+  | [] => (steps, current)
+  | e :: τ' =>
+      match e.antecedent with
+      | none =>
+          -- 该字面是决策字面，没有前因；跳过
+          conflictAnalyzeLoop τ' current steps
+      | some A =>
+          -- 如果 current 中包含 e.lit，则用它和 A 做一步 Resolution
+          if hMem : current.any (fun ℓ => ℓ = e.lit) then
+            let current' := Resolution.resolveOneStep e.lit current A
+            conflictAnalyzeLoop τ' current' (steps.succ)
+          else
+            conflictAnalyzeLoop τ' current steps
 
-/-- Backtrack：
+/-- Conflict Analyze：
+    * 若 s.conflict = none：什么都不做；
+    * 若 s.conflict = some C：
+        - 在 Trail 上跑 conflictAnalyzeLoop 得到学习子句 learntC 和
+          本次发生的 Resolution 步数 k；
+        - 把 learntC 加入 learnt；
+        - 清空 conflict；
+        - 把 resSteps 设为 k（即 λ_Resolution 这一步的增量）。 -/
+def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
+  match s.conflict with
+  | none => s
+  | some C =>
+      let (k, learntC) := conflictAnalyzeLoop s.trail C 0
+      { s with
+        learnt   := learntC :: s.learnt
+        conflict := none
+        resSteps := k }
+
+ /-- Backtrack：
     * 目标：根据冲突分析的结果回溯 trail（CDCL 的 backjump）；
     * 当前骨架：暂时直接返回原状态。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
@@ -916,23 +939,22 @@ def decide {n : Nat} (s : State n) : State n :=
             { lit        := lit
               level      := newLevel
               antecedent := none }
-          { trail         := newEntry :: s.trail
-            decisionLevel := newLevel
-            learnt        := s.learnt
-            pending       := s.pending
-            conflict      := s.conflict }
+          { s with
+            trail         := newEntry :: s.trail
+            decisionLevel := newLevel }
 
 --------------------------------------------------
 -- 11.6 抽象 DPLL 模型：用上述四个操作组合成一步 step
 --------------------------------------------------
 
-/-- 初始状态：trail 为空；决策层级 0；learnt 为空；pending = 原公式的 RCNF ；无冲突。 -/
+/-- 初始状态：trail 为空；决策层级 0；learnt 为空；pending = 原公式的 RCNF ；无冲突；resSteps = 0。 -/
 def initState {n : Nat} (Φ : CNF n) : State n :=
   { trail         := []
     decisionLevel := 0
     learnt        := []
     pending       := cnfToRCNF Φ
-    conflict      := none }
+    conflict      := none
+    resSteps      := 0 }
 
 /-- 抽象 DPLL 模型：
     * init : 建立 initState；
@@ -955,22 +977,26 @@ def Model (n : Nat) : AlgorithmModel n :=
       s.pending = [] ∨ s.conflict ≠ none }
 
 --------------------------------------------------
--- 11.7 结构密度 λ'：每一步至少付出 1 单位 Action
+-- 11.7 λ_Resolution 结构密度：每个状态的 cost = 1 + 本步 Resolution 步数
 --------------------------------------------------
 
-/-- 最简骨架版结构密度：
-    * 每个状态的 cost = 1。 -/
-def density (n : Nat) (s : State n) : Nat := 1
+/-- λ_Resolution 密度：
+    * 基础 cost = 1（每走一步都至少付出 1 单位 Action）；
+    * 再加上本次 step 的 Resolution 步数 resSteps，
+      由 ConflictAnalyze 填充。 -/
+def density (n : Nat) (s : State n) : Nat :=
+  1 + s.resSteps
 
 --------------------------------------------------
 -- 11.8 DPLL 专用的 pathActionNat ≥ 步数 引理
 --------------------------------------------------
 
-/-- 对 DPLL 模型的 density，任意状态的 cost 至少为 1。 -/
+/-- 对 DPLL 模型的 λ_Resolution，任意状态的 cost 至少为 1。 -/
 lemma density_pos (n : Nat)
     (Φ : CNF n) (ψ : ComputationPath (Model n) Φ)
     (t : Fin (ψ.T + 1)) :
     1 ≤ density n (ψ.states t) := by
+  -- density n (ψ.states t) = 1 + resSteps ≥ 1
   simp [density]
 
 /-- 专门版下界：在 DPLL 模型中，路径的 Action 至少等于时间步数 ψ.T + 1。 -/
