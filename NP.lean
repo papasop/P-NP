@@ -569,11 +569,41 @@ theorem no_polyTime_on_family
   toy_hardFamily_contradiction A hLower hUpper
 
 ------------------------------------------------------------
--- 8. 一个“占位版”的 HardActionDPLL（目前只是 0）；
---    真正的指数下界与多项式上界由后续构造性证明替代。
+-- 7.5 提前声明：Resolution 系统的指数下界公理
 ------------------------------------------------------------
 
-def HardActionDPLL : ActionSeq := fun _ => 0
+namespace Resolution
+
+/-- （抽象形态）Resolution 对某些公式族的指数下界占位公理。 -/
+axiom resolutionRefutation_expLower_2pow :
+  ∃ (Len : StructuralAction.ActionSeq),
+    StructuralAction.ExpLower_2pow Len
+
+end Resolution
+
+------------------------------------------------------------
+-- 8. HardActionDPLL：从 Resolution 下界公理中“择取”出来的困难族作用量
+------------------------------------------------------------
+
+noncomputable
+def HardActionDPLL : ActionSeq :=
+  Classical.choose Resolution.resolutionRefutation_expLower_2pow
+
+lemma HardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL :=
+  Classical.choose_spec Resolution.resolutionRefutation_expLower_2pow
+
+/-- 来自某个（未显式给出）DPLL / CDCL 算法的多项式上界：
+    这里仍然是公理，占位你后续真正的“算法→多项式复杂度”证明。 -/
+axiom HardActionDPLL_polyUpper_from_alg :
+  PolyUpper_general HardActionDPLL
+
+/-- 把指数下界 + 多项式上界拼在一起得到的“无多项式时间”矛盾。 -/
+theorem no_polyTime_DPLL_on_hardFamily : False :=
+  no_polyTime_on_family
+    HardActionDPLL
+    HardActionDPLL_expLower_2pow
+    HardActionDPLL_polyUpper_from_alg
 
 ------------------------------------------------------------
 -- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
@@ -697,11 +727,6 @@ def derivationLength {n : Nat} {Φ : RCNF n} {C : RClause n}
 def proofLength {n : Nat} {Φ : RCNF n}
     (π : Refutes Φ) : Nat :=
   derivationLength π
-
-/-- （抽象形态）Resolution 对某些公式族的指数下界占位公理。 -/
-axiom resolutionRefutation_expLower_2pow :
-  ∃ (Len : StructuralAction.ActionSeq),
-    StructuralAction.ExpLower_2pow Len
 
 end Resolution
 
@@ -950,6 +975,7 @@ lemma buildPathFromRefutation_action_ge_proofLength
 end AbstractDPLL
 
 end StructuralAction
+
 
 
 
