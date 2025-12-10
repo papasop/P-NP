@@ -249,7 +249,7 @@ axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
     StructuralAction.cnfEval σ (to3CNF Φ) = true
 
 ------------------------------------------------------------
--- 3b. Tseitin 转换骨架
+-- 3b. Tseitin 转换骨架 + Equisatisfiability 证明
 ------------------------------------------------------------
 
 section Tseitin
@@ -300,21 +300,45 @@ def tseitinOfGenCNF {n : Nat}
   { auxVars := 0
   , cnf     := to3CNF Φ }
 
--- Tseitin 转换的“存在扩展赋值”方向：
-axiom tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
+/-- Tseitin 方向 1：
+    若原始 GenCNF 可满足，则 Tseitin 3-CNF 也可满足。 -/
+lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
   (∃ σ : StructuralAction.Assignment n,
       genCNFEval σ Φ = true)
   →
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
-      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
+      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true) := by
+  intro h
+  classical
+  rcases h with ⟨σ, hσ⟩
+  -- 由于 auxVars = 0，Assignment (n + aux) 与 Assignment n 直接相等
+  refine ⟨σ, ?_⟩
+  -- 用旧的 to3CNF_equisat 把 genCNFEval ⇒ cnfEval
+  have hCnf : StructuralAction.cnfEval σ (to3CNF Φ) = true :=
+    (to3CNF_equisat (Φ := Φ) (σ := σ)).mp hσ
+  -- 再把 tseitinOfGenCNF Φ 展开成 to3CNF Φ
+  simpa [tseitinOfGenCNF] using hCnf
 
--- Tseitin 转换的“投影回原变量”方向：
-axiom genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
+/-- Tseitin 方向 2：
+    若 Tseitin 3-CNF 可满足，则原始 GenCNF 也可满足。 -/
+lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
       StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
   →
   (∃ σ : StructuralAction.Assignment n,
-      genCNFEval σ Φ = true)
+      genCNFEval σ Φ = true) := by
+  intro h
+  classical
+  rcases h with ⟨σ', hσ'⟩
+  -- 同样利用 auxVars = 0，直接把 σ' 当作原变量赋值使用
+  refine ⟨σ', ?_⟩
+  -- 先把 Tseitin CNF 展开为 to3CNF Φ，并用 to3CNF_equisat 的逆向
+  have hGen : genCNFEval σ' Φ = true :=
+    (to3CNF_equisat (Φ := Φ) (σ := σ')).mpr
+      (by
+        -- 证明 cnfEval σ' (to3CNF Φ) = true 与 hσ' 同构
+        simpa [tseitinOfGenCNF] using hσ')
+  exact hGen
 
 end Tseitin
 
@@ -507,6 +531,70 @@ lemma HardCNF_unsat (n : Nat) :
       exact hFalse
 
 end PHPUnsat
+
+------------------------------------------------------------
+-- 6'. 使用 Tseitin 版本的 HardCNF_T：PHP_fullGenCNF 经 Tseitin 的 3-CNF
+------------------------------------------------------------
+
+section PHPUnsatTseitin
+
+open PigeonholeFamily
+
+/-- Tseitin 之后 PHPₙ 的变量总数：
+    原始 PHPVar n 个变量 + Tseitin 引入的辅助变量个数。 -/
+noncomputable
+def HardVarT (n : Nat) : Nat :=
+  PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars
+
+/-- Tseitin 版困难族公式：对 PHP_fullGenCNF 做 Tseitin 3-CNF 转换。 -/
+noncomputable
+def HardCNF_T (n : Nat) : CNF (HardVarT n) :=
+  (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf
+
+/-- Tseitin 版困难族公式不可满足：
+    对任意赋值 σ' : Assignment (HardVarT n)，HardCNF_T n 的值恒为 false。 -/
+lemma HardCNF_T_unsat (n : Nat) :
+  ∀ σ' : Assignment (HardVarT n),
+    cnfEval σ' (HardCNF_T n) = false := by
+  intro σ'
+  classical
+  -- 已有：PHP_fullGenCNF n 不可满足
+  have hUnsatGen := PHP_fullGenCNF_unsat n
+
+  -- 先证明：cnfEval σ' (HardCNF_T n) ≠ true
+  have hNotSat : ¬ cnfEval σ' (HardCNF_T n) = true := by
+    intro hSat
+    -- 把 hSat 包成“存在一个 σ' 满足 Tseitin 公式”的形式
+    have hSatExist :
+        ∃ σ'' : Assignment (PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars),
+          cnfEval σ'' (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf = true := by
+      refine ⟨σ', ?_⟩
+      -- 展开 HardCNF_T 和 HardVarT，类型刚好对上
+      simpa [HardCNF_T, HardVarT] using hSat
+
+    -- 用 Tseitin 的 “sat ⇒ genSat” 定理，把满足性拉回到原始 GenCNF
+    have hGenSat :
+        ∃ σ₀ : Assignment (PHPVar n),
+          genCNFEval σ₀ (PHP_fullGenCNF n) = true :=
+      genSat_of_tseitin_sat (Φ := PHP_fullGenCNF n) hSatExist
+
+    -- 与 PHP_fullGenCNF_unsat 矛盾
+    exact hUnsatGen hGenSat
+
+  -- Bool 只有 true / false 两种情况
+  have hOr :
+      cnfEval σ' (HardCNF_T n) = true ∨
+      cnfEval σ' (HardCNF_T n) = false := by
+    cases h : cnfEval σ' (HardCNF_T n) <;> simp [h]
+
+  -- 排除 true，剩下的只能是 false
+  cases hOr with
+  | inl hTrue =>
+      exact False.elim (hNotSat hTrue)
+  | inr hFalse =>
+      exact hFalse
+
+end PHPUnsatTseitin
 
 ------------------------------------------------------------
 -- 7. 抽象 DPLL 作用量序列 + 指数下界 / 多项式上界 schema
