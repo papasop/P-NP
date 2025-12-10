@@ -569,22 +569,6 @@ theorem no_polyTime_on_family
   toy_hardFamily_contradiction A hLower hUpper
 
 ------------------------------------------------------------
--- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族（抽象）
-------------------------------------------------------------
-
-axiom HardActionDPLL : ActionSeq
-axiom hardActionDPLL_expLower_2pow :
-  ExpLower_2pow HardActionDPLL
-axiom hardActionDPLL_polyUpper_from_alg :
-  PolyUpper_general HardActionDPLL
-
-theorem no_polyTime_DPLL_on_hardFamily : False :=
-  no_polyTime_on_family
-    HardActionDPLL
-    hardActionDPLL_expLower_2pow
-    hardActionDPLL_polyUpper_from_alg
-
-------------------------------------------------------------
 -- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
 ------------------------------------------------------------
 
@@ -650,7 +634,7 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 系统（修正版：RClause = List (Literal n)）
+-- 10. Resolution 系统（RClause = List (Literal n)）+ HardRCNF 族
 ------------------------------------------------------------
 
 namespace Resolution
@@ -699,7 +683,7 @@ def proofLength {n : Nat} {Φ : RCNF n}
   derivationLength π
 
 ------------------------------------------------------------
--- 10B. 方案 B：用 HardCNF_T 族替代抽象 Resolution 下界公理
+-- 10B. 用 HardCNF_T 族构造 Resolution 困难族 HardRCNF
 ------------------------------------------------------------
 
 open StructuralAction.PigeonholeFamily
@@ -830,14 +814,14 @@ def Model (n : Nat) : AlgorithmModel n :=
 def density (n : Nat) (s : State n) : Nat := 1
 
 --------------------------------------------------
--- 11.6 Resolution → DPLLPath 的“模拟骨架”
+-- 11.6 Resolution → DPLLPath 的“模拟骨架”（参数化 π）
 --------------------------------------------------
 
 /-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
     构造 DPLL 计算路径 ψ，并证明
       pathActionNat ≥ proofLength π。 -/
-structure Simulation {n : Nat} (Φ : CNF n) where
-  π  : Refutes (cnfToRCNF Φ)
+structure Simulation {n : Nat} (Φ : CNF n)
+    (π : Refutes (cnfToRCNF Φ)) where
   ψ  : ComputationPath (Model n) Φ
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
@@ -847,11 +831,69 @@ structure Simulation {n : Nat} (Φ : CNF n) where
     ⭐ 当前仍然是公理，未来你的目标是把它变成 theorem。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
-  Simulation (Φ := Φ)
+  Simulation (Φ := Φ) (π := π)
 
 end AbstractDPLL
 
+------------------------------------------------------------
+-- 12. 用 DPLL 模型定义 HardActionDPLL，并给出指数下界定理
+------------------------------------------------------------
+
+open Resolution
+open AbstractDPLL
+
+/-- 困难族上的 DPLL 作用量：
+    对每个 n，取 HardCNF_T n 与其 Resolution 反驳 πₙ，
+    通过 exists_simulation 得到一条 DPLL 轨迹 ψₙ，
+    定义 HardActionDPLL n = 该轨迹的 pathActionNat。 -/
+noncomputable
+def HardActionDPLL (n : Nat) : Nat :=
+  let Φ := HardCNF_T n
+  -- HardRCNF n 与 cnfToRCNF Φ 定义上相等
+  let π : Refutes (cnfToRCNF Φ) :=
+    by
+      -- HardRCNF n = cnfToRCNF (HardCNF_T n)，所以 refutation 也可视为该类型
+      exact (HardCNF_T_hasResolutionRefutation n)
+  let sim := exists_simulation (Φ := Φ) (π := π)
+  pathActionNat (Model (HardVarT n)) Φ (density (HardVarT n)) sim.ψ
+
+/-- 下界：HardActionDPLL n ≥ 2^n。 -/
+theorem hardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL := by
+  intro n
+  classical
+  -- 设定 Φ、π、sim，方便书写
+  let Φ := HardCNF_T n
+  let π : Refutes (cnfToRCNF Φ) :=
+    (HardCNF_T_hasResolutionRefutation n)
+  let sim := exists_simulation (Φ := Φ) (π := π)
+  have hLen : (2 : Nat)^n ≤ proofLength π := by
+    -- HardCNF_T_resProofLength_expLower 中的 π 即 HardCNF_T_hasResolutionRefutation n
+    simpa [π] using HardCNF_T_resProofLength_expLower n
+  have hA  : proofLength π ≤
+      pathActionNat (Model (HardVarT n)) Φ (density (HardVarT n)) sim.ψ :=
+    sim.hA
+  -- 合并不等式
+  have hTrans :
+      (2 : Nat)^n ≤
+      pathActionNat (Model (HardVarT n)) Φ (density (HardVarT n)) sim.ψ :=
+    le_trans hLen hA
+  -- 目标即 HardActionDPLL n ≥ 2^n
+  simpa [HardActionDPLL, Φ, π, sim] using hTrans
+
+/-- 多项式上界假设：DPLL 算法在困难族上的作用量至多 n^2（玩具版）。 -/
+axiom hardActionDPLL_polyUpper_from_alg :
+  PolyUpper_general HardActionDPLL
+
+/-- 组合指数下界 + 多项式上界，得到矛盾。 -/
+theorem no_polyTime_DPLL_on_hardFamily : False :=
+  no_polyTime_on_family
+    HardActionDPLL
+    hardActionDPLL_expLower_2pow
+    hardActionDPLL_polyUpper_from_alg
+
 end StructuralAction
+
 
 
 
