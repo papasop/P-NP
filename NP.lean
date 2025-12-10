@@ -909,18 +909,14 @@ def Model (n : Nat) : AlgorithmModel n :=
 def density (n : Nat) (s : State n) : Nat := 1
 
 --------------------------------------------------
--- 11.8 Resolution → DPLLPath 的“模拟骨架”（仍为公理）
+-- 11.8 Resolution → DPLLPath 的“模拟骨架”（依赖指定 π）
 --------------------------------------------------
 
 /-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
     构造 DPLL 计算路径 ψ，并证明
-      pathActionNat ≥ proofLength π。
-
-    这里我们只先把目标打包成一个结构体类型，
-    具体构造在 `exists_simulation` 中给出（当前仍是公理，
-    未来要用真正的 DPLL/CDCL 逻辑来证明）。 -/
-structure Simulation {n : Nat} (Φ : CNF n) where
-  π  : Refutes (cnfToRCNF Φ)
+      pathActionNat ≥ proofLength π。 -/
+structure Simulation {n : Nat} (Φ : CNF n)
+    (π : Refutes (cnfToRCNF Φ)) where
   ψ  : ComputationPath (Model n) Φ
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
@@ -929,10 +925,27 @@ structure Simulation {n : Nat} (Φ : CNF n) where
     使得 Action(ψ) ≥ proofLength(π)。
 
     ⭐ 当前仍然是公理（axiom），
-       你的终极目标是把它变成真正的 theorem。 -/
+       未来你的目标是把它变成真正的 theorem。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
-  Simulation (Φ := Φ)
+  Simulation (Φ := Φ) (π := π)
+
+/-- 从给定的 Resolution 反驳 π 出发，构造一条对应的 DPLL 路径。 -/
+noncomputable
+def buildPathFromRefutation {n : Nat} (Φ : CNF n)
+    (π : Refutes (cnfToRCNF Φ)) :
+    ComputationPath (Model n) Φ :=
+  (exists_simulation (Φ := Φ) (π := π)).ψ
+
+/-- 关键不等式：沿着由 π 生成的路径，DPLL 的离散作用量
+    至少等于该 Resolution 反驳的长度。 -/
+lemma buildPathFromRefutation_action_ge_proofLength
+    {n : Nat} (Φ : CNF n) (π : Refutes (cnfToRCNF Φ)) :
+    proofLength π ≤
+      pathActionNat (Model n) Φ (density n)
+        (buildPathFromRefutation (Φ := Φ) (π := π)) := by
+  have hA := (exists_simulation (Φ := Φ) (π := π)).hA
+  simpa [buildPathFromRefutation] using hA
 
 end AbstractDPLL
 
