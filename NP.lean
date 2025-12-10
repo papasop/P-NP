@@ -295,13 +295,9 @@ lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
 
 end Tseitin
 
-end PigeonholeFamily
-
 ------------------------------------------------------------
 -- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
 ------------------------------------------------------------
-
-open PigeonholeFamily
 
 -- 第 n 个鸽子：共有 n+1 只鸽子
 abbrev Pigeon (n : Nat) := Fin (n + 1)
@@ -406,6 +402,8 @@ axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
   ↔
   (∃ f : Pigeon n → Hole n, Function.Injective f)
 
+end PigeonholeFamily
+
 ------------------------------------------------------------
 -- 5. 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
 ------------------------------------------------------------
@@ -413,6 +411,7 @@ axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
 section PigeonholeMath
 
 open Function
+open PigeonholeFamily
 
 lemma no_injection_Pigeon_to_Hole (n : Nat) :
     ¬ ∃ f : Pigeon n → Hole n, Function.Injective f := by
@@ -433,6 +432,8 @@ end PigeonholeMath
 ------------------------------------------------------------
 
 section PHPUnsat
+
+open PigeonholeFamily
 
 -- PHP_fullGenCNF 不可满足
 lemma PHP_fullGenCNF_unsat (n : Nat) :
@@ -485,6 +486,8 @@ end PHPUnsat
 ------------------------------------------------------------
 
 section PHPUnsatTseitin
+
+open PigeonholeFamily
 
 /-- Tseitin 之后 PHPₙ 的变量总数：
     原始 PHPVar n 个变量 + Tseitin 引入的辅助变量个数。 -/
@@ -699,6 +702,48 @@ axiom resolutionRefutation_expLower_2pow :
   ∃ (Len : StructuralAction.ActionSeq),
     StructuralAction.ExpLower_2pow Len
 
+--------------------------------------------------
+-- 10.x 子句规范化辅助函数：merge / simplify / resolveOneStep
+--------------------------------------------------
+
+/-- 合并两个子句：语义上是 C ∪ D，这里先实现成列表连接，
+    后面交给 `simplify` 去做去重和互补对处理。 -/
+def merge {n : Nat} (C D : RClause n) : RClause n :=
+  C ++ D
+
+/-- 在子句 C 中检测某个字面 ℓ 是否出现。 -/
+def clauseContains {n : Nat} (C : RClause n) (ℓ : Literal n) : Bool :=
+  C.any (fun m => m = ℓ)
+
+/-- 在子句 C 中检测是否出现 ℓ 的互补字面 ¬ℓ。 -/
+def clauseContainsNeg {n : Nat} (C : RClause n) (ℓ : Literal n) : Bool :=
+  C.any (fun m => m = litNeg ℓ)
+
+/-- 子句规范化：
+    * 去重：同一个字面只保留一次；
+    * 去互补对：如果已经包含某个字面的否定，就不再加入这个字面，
+      从而确保同一个子句中不会同时出现 ℓ 和 ¬ℓ。 -/
+def simplify {n : Nat} (C : RClause n) : RClause n :=
+  C.foldl
+    (fun acc ℓ =>
+      if clauseContains acc ℓ then
+        acc
+      else if clauseContainsNeg acc ℓ then
+        acc
+      else
+        acc ++ [ℓ])
+    ([] : RClause n)
+
+/-- 单步 Resolution 操作：
+    给定字面 ℓ 和两个子句 C, D，执行
+      C ∨ ℓ,  D ∨ ¬ℓ   ⊢   simplify((C \ {ℓ}) ∪ (D \ {¬ℓ})).
+ -/
+def resolveOneStep {n : Nat}
+    (ℓ : Literal n) (C D : RClause n) : RClause n :=
+  let C' : RClause n := C.filter (fun m => m ≠ ℓ)
+  let D' : RClause n := D.filter (fun m => m ≠ litNeg ℓ)
+  simplify (merge C' D')
+
 end Resolution
 
 ------------------------------------------------------------
@@ -751,6 +796,22 @@ structure State (n : Nat) where
   conflict      : Option (RClause n)
 
 --------------------------------------------------
+-- 11.2' Trail 反向查找：根据字面找 antecedent
+--------------------------------------------------
+
+/-- 在 Trail τ 中查找给定字面 ℓ 的 antecedent 子句。
+
+    语义：
+    * 找到第一个满足 e.lit = ℓ 的 TrailEntry；
+    * 若该条目的 antecedent = some C，则返回 some C；
+    * 否则（没找到 / antecedent = none）返回 none。 -/
+def findAntecedent {n : Nat}
+    (τ : Trail n) (ℓ : Literal n) : Option (RClause n) :=
+  match τ.find? (fun e => e.lit = ℓ) with
+  | none       => none
+  | some entry => entry.antecedent
+
+--------------------------------------------------
 -- 11.3 辅助函数：在 trail 下判断字面真假 + unit 子句检测
 --------------------------------------------------
 
@@ -763,7 +824,8 @@ def litIsFalse {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
   τ.any (fun e => e.lit = litNeg ℓ)
 
 /-- 在给定 trail 下，从子句 C 里收集“未赋值的字面”。 -/
-def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) : List (Literal n) :=
+def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) :
+    List (Literal n) :=
   C.filter (fun ℓ => !litIsTrue τ ℓ && !litIsFalse τ ℓ)
 
 --------------------------------------------------
@@ -826,8 +888,8 @@ def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
     * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
     * 当前骨架：暂时不改变状态，只是占位。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
-  -- TODO：若 s.conflict = some C，则在 trail 上做 UIP 分析，
-  --       通过 Resolution 生成新的 learnt 子句，并清空 conflict 或做 backjump。
+  -- TODO：在这里使用 `findAntecedent` 与 `Resolution.resolveOneStep`
+  --       实现真正的冲突分析与学习子句逻辑。
   s
 
 /-- Backtrack：
@@ -841,8 +903,7 @@ def backtrack {n : Nat} (s : State n) : State n :=
     * 目标：在没有 unit / 冲突时，选择一个未赋值的变量做决策；
     * 实现：如果 pending 非空且其中首子句非空，取该子句的首字面为决策；
       提升 decisionLevel 并把决策写入 trail；
-      否则保持不变。
-    ★ 不再使用 `⟨0, by decide⟩`，避免出现 `0 < n` 的自由变量目标。 -/
+      否则保持不变。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
@@ -898,10 +959,7 @@ def Model (n : Nat) : AlgorithmModel n :=
 --------------------------------------------------
 
 /-- 最简骨架版结构密度：
-    * 每个状态的 cost = 1；
-    * 未来可以升级为：
-        - unitProp / resolve 步单独计价；
-        - 让 Action 精确界面到 Resolution.proofLength。 -/
+    * 每个状态的 cost = 1。 -/
 def density (n : Nat) (s : State n) : Nat := 1
 
 --------------------------------------------------
@@ -962,6 +1020,10 @@ end AbstractDPLL
 -- 12. Resolution-hard family → DPLL-hard action family
 ------------------------------------------------------------
 
+namespace StructuralAction
+
+section HardFamilySchema
+
 open Resolution
 open AbstractDPLL
 
@@ -1012,7 +1074,7 @@ lemma hardActionFromFamily_ge_resLength (H : HardFamily) :
       (H.F n)
       (AbstractDPLL.density (H.m n))
       sim.ψ
-  -- 这正是 Simulation.hA 的内容（注意 ≥ 的定义就是 ≤ 反向）
+  -- 这正是 Simulation.hA 的内容
   exact sim.hA
 
 /-- 若某个 HardFamily 的 Resolution 反驳族存在指数下界，
@@ -1030,14 +1092,14 @@ lemma expLower_lift_from_res_to_dpll
   -- 合成得到指数下界提升
   exact le_trans h1 h2
 
-/-- 抽象存在性公理：
-    存在一个 HardFamily，使得：
-    1. Resolution 反驳长度族具有指数下界；
-    2. 对应的 DPLL 作用量族 **不** 具有多项式上界。 -/
-axiom exists_hardFamily_no_polyTime :
-  ∃ H : HardFamily,
-    ExpLower_2pow (resLengthSeq H) ∧
-    ¬ PolyUpper_general (hardActionFromFamily H)
+end HardFamilySchema
+
+end StructuralAction
+
+namespace StructuralAction
+
+open Resolution
+open AbstractDPLL
 
 /-- 把 “Resolution 困难族在证明长度上有指数下界”
     和 “对应的 DPLL 作用量族有多项式上界” 拼在一起，
@@ -1046,60 +1108,19 @@ theorem no_polyTime_DPLL_on_HardFamily
     (H : HardFamily)
     (hRes : ExpLower_2pow (resLengthSeq H))
     (hUpper : PolyUpper_general (hardActionFromFamily H)) :
-    False := by
-  -- 用第 12 节的提升引理，把 Resolution 的指数下界搬到 DPLL 侧
-  have hLowerDPLL : ExpLower_2pow (hardActionFromFamily H) :=
-    expLower_lift_from_res_to_dpll H hRes
-  -- 套用第 7 节的 toy_hardFamily_contradiction schema
-  exact
-    no_polyTime_on_family
-      (A      := hardActionFromFamily H)
-      (hLower := hLowerDPLL)
-      (hUpper := hUpper)
+    False :=
+  by
+    -- 用提升引理，把 Resolution 的指数下界搬到 DPLL 侧
+    have hLowerDPLL : ExpLower_2pow (hardActionFromFamily H) :=
+      expLower_lift_from_res_to_dpll H hRes
+    -- 套用 toy_hardFamily_contradiction schema
+    exact
+      no_polyTime_on_family
+        (A      := hardActionFromFamily H)
+        (hLower := hLowerDPLL)
+        (hUpper := hUpper)
 
-------------------------------------------------------------
--- 15. 选取一个具体的 HardFamily 见证，并给出对应的 HardActionDPLL
-------------------------------------------------------------
-
-section GlobalHardActionDPLL
-
-open Classical
-
-/-- 选取一个具体的困难族见证：
-    来自 `exists_hardFamily_no_polyTime`。 -/
-noncomputable def HardFamilyWitness : HardFamily :=
-  Classical.choose exists_hardFamily_no_polyTime
-
-/-- 见证困难族的性质：
-    1. Resolution 反驳长度族有指数下界；
-    2. 对应的 DPLL 作用量族 **不** 具有多项式上界。 -/
-lemma HardFamilyWitness_spec :
-  ExpLower_2pow (resLengthSeq HardFamilyWitness) ∧
-  ¬ PolyUpper_general (hardActionFromFamily HardFamilyWitness) :=
-  Classical.choose_spec exists_hardFamily_no_polyTime
-
-/-- 把这个具体困难族的 DPLL 作用量族命名出来。 -/
-noncomputable def HardActionDPLL_witness : ActionSeq :=
-  hardActionFromFamily HardFamilyWitness
-
-/-- HardActionDPLL_witness 没有多项式上界（在当前的 `n^2` 模型下）。 -/
-lemma HardActionDPLL_witness_noPoly :
-  ¬ PolyUpper_general HardActionDPLL_witness := by
-  -- 从 HardFamilyWitness_spec 中取出第二个性质
-  have h := HardFamilyWitness_spec
-  -- h.2 : ¬ PolyUpper_general (hardActionFromFamily HardFamilyWitness)
-  simpa [HardActionDPLL_witness] using h.2
-
-/-- HardActionDPLL_witness 继承了指数级下界（来自 Resolution）。 -/
-lemma HardActionDPLL_witness_expLower :
-  ExpLower_2pow HardActionDPLL_witness := by
-  -- HardFamilyWitness_spec.1 : ExpLower_2pow (resLengthSeq HardFamilyWitness)
-  have hRes : ExpLower_2pow (resLengthSeq HardFamilyWitness) :=
-    (HardFamilyWitness_spec).1
-  -- 用第 12 节的提升引理，从 Resolution 下界提升到 DPLL 作用量下界
-  exact expLower_lift_from_res_to_dpll HardFamilyWitness hRes
-
-end GlobalHardActionDPLL
+end StructuralAction
 
 end StructuralAction
 
