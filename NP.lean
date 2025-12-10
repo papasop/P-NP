@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr
+  deriving Repr, DecidableEq
 
 -- 子句：3 个字面
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -628,34 +628,8 @@ theorem toy_hardFamily_contradiction
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
 
--- 更语义化的包装名字
-theorem no_polyTime_on_family
-    (A : ActionSeq)
-    (hLower : ExpLower_2pow A)
-    (hUpper : PolyUpper_general A) :
-    False :=
-  toy_hardFamily_contradiction A hLower hUpper
-
 ------------------------------------------------------------
--- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
-------------------------------------------------------------
-
-axiom HardActionDPLL : ActionSeq
-
-axiom hardActionDPLL_expLower_2pow :
-  ExpLower_2pow HardActionDPLL
-
-axiom hardActionDPLL_polyUpper_from_alg :
-  PolyUpper_general HardActionDPLL
-
-theorem no_polyTime_DPLL_on_hardFamily : False :=
-  no_polyTime_on_family
-    HardActionDPLL
-    hardActionDPLL_expLower_2pow
-    hardActionDPLL_polyUpper_from_alg
-
-------------------------------------------------------------
--- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
+-- 8. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
 ------------------------------------------------------------
 
 structure AlgorithmModel (n : Nat) where
@@ -731,7 +705,7 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. 抽象 Resolution 证明系统骨架
+-- 9. 抽象 Resolution 证明系统骨架 + proofLength
 ------------------------------------------------------------
 
 namespace Resolution
@@ -763,8 +737,9 @@ def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
 /-- 抽象的 Resolution 推导关系：
-    Derives Φ C 表示：从前提 Φ 开始，通过有限步解析规则，可以推导出子句 C。 -/
-inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Prop where
+    注意：我们把它定义在 `Type` 里，而不是 `Prop`，
+    这样可以对证明对象做递归，定义 proofLength。 -/
+inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
   | axiom {C} (hC : C ∈ Φ) :
       Derives Φ C
   | weaken {C D} (hSub : ∀ ℓ, ℓ ∈ C → ℓ ∈ D) (hC : Derives Φ C) :
@@ -774,20 +749,78 @@ inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Prop where
       (hD : Derives Φ (litNeg ℓ :: D)) :
       Derives Φ (C ++ D)
 
-/-- 空子句 [] 代表“假”；Refutation = 能从 Φ 推出空子句。 -/
+/-- 空子句 [] 代表“假”；Refutation = 能从 Φ 推出空子句。
+    这里用 `Nonempty` 包一下，作为一个命题。 -/
 abbrev Refutation {n : Nat} (Φ : RCNF n) : Prop :=
-  Derives Φ []
+  Nonempty (Derives Φ [])
+
+/-- 解析证明的“长度”：对 Derives 证明树做结构递归计数。 -/
+def proofLength {n : Nat} {Φ : RCNF n} {C : RClause n}
+    (h : Derives Φ C) : Nat :=
+  match h with
+  | Derives.axiom _ => 1
+  | Derives.weaken _ hC => proofLength hC
+  | Derives.resolve hC hD => proofLength hC + proofLength hD + 1
 
 end Resolution
 
 ------------------------------------------------------------
--- 11. 公理：HardCNF_T 在 Resolution 中可反驳
+-- 10. 公理：HardCNF_T 在 Resolution 中可反驳
 ------------------------------------------------------------
 
 axiom HardCNF_T_hasResolutionRefutation (n : Nat) :
   Resolution.Refutation (Resolution.of3CNF (HardCNF_T n))
 
+------------------------------------------------------------
+-- 11. DPLL 作用量与 Resolution 成本的连接
+------------------------------------------------------------
+
+-- 概念上：HardActionDPLL n =
+--   在 HardCNF_T n 上，所有合法 DPLL 轨迹 ψ 的最小结构作用量 A[ψ]。
+axiom HardActionDPLL : ActionSeq
+
+-- 多项式上界假设（算法侧的“反面假设”）
+axiom hardActionDPLL_polyUpper_from_alg :
+  PolyUpper_general HardActionDPLL
+
+/-- 公理 1：对于 PHPₙ 的 Tseitin 3-CNF，
+    任意一个 Resolution 反驳的长度都具有指数下界 2^n。 -/
+axiom resolutionRefutation_expLower_2pow :
+  ∀ n (π : Resolution.Derives (Resolution.of3CNF (HardCNF_T n)) []),
+    (2 : Nat)^n ≤ Resolution.proofLength π
+
+/-- 公理 2：结构作用量能够“吸收” Resolution 成本：
+    在 HardCNF_T n 上，任一 Resolution 反驳的长度
+    都不超过 HardActionDPLL n（最小作用量）。 -/
+axiom hardAction_ge_resProofLength :
+  ∀ n (π : Resolution.Derives (Resolution.of3CNF (HardCNF_T n)) []),
+    Resolution.proofLength π ≤ HardActionDPLL n
+
+/-- 由 Resolution 指数下界 + 作用量 ≥ 解析长度
+    推出 HardActionDPLL 本身具有指数下界。 -/
+theorem hardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL := by
+  intro n
+  classical
+  -- 从公理拿到一个具体的 refutation π
+  have hRef : Resolution.Refutation (Resolution.of3CNF (HardCNF_T n)) :=
+    HardCNF_T_hasResolutionRefutation n
+  rcases hRef with ⟨π⟩
+  have h1 : (2 : Nat)^n ≤ Resolution.proofLength π :=
+    resolutionRefutation_expLower_2pow n π
+  have h2 : Resolution.proofLength π ≤ HardActionDPLL n :=
+    hardAction_ge_resProofLength n π
+  exact le_trans h1 h2
+
+/-- 最终的矛盾：同一个 HardActionDPLL 既有指数下界又有 n^2 上界 ⇒ 不可能。 -/
+theorem no_polyTime_DPLL_on_hardFamily : False :=
+  toy_hardFamily_contradiction
+    HardActionDPLL
+    hardActionDPLL_expLower_2pow
+    hardActionDPLL_polyUpper_from_alg
+
 end StructuralAction
+
 
 
 
