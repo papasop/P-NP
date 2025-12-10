@@ -249,7 +249,7 @@ axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
     StructuralAction.cnfEval σ (to3CNF Φ) = true
 
 ------------------------------------------------------------
--- 3b. Tseitin 转换骨架 + Equisatisfiability 证明
+-- 3b. Tseitin 转换骨架 + Equisatisfiability 证明（骨架版）
 ------------------------------------------------------------
 
 section Tseitin
@@ -628,8 +628,34 @@ theorem toy_hardFamily_contradiction
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
 
+-- 更语义化的包装名字
+theorem no_polyTime_on_family
+    (A : ActionSeq)
+    (hLower : ExpLower_2pow A)
+    (hUpper : PolyUpper_general A) :
+    False :=
+  toy_hardFamily_contradiction A hLower hUpper
+
 ------------------------------------------------------------
--- 8. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
+-- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族（仍用公理）
+------------------------------------------------------------
+
+axiom HardActionDPLL : ActionSeq
+
+axiom hardActionDPLL_expLower_2pow :
+  ExpLower_2pow HardActionDPLL
+
+axiom hardActionDPLL_polyUpper_from_alg :
+  PolyUpper_general HardActionDPLL
+
+theorem no_polyTime_DPLL_on_hardFamily : False :=
+  no_polyTime_on_family
+    HardActionDPLL
+    hardActionDPLL_expLower_2pow
+    hardActionDPLL_polyUpper_from_alg
+
+------------------------------------------------------------
+-- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
 ------------------------------------------------------------
 
 structure AlgorithmModel (n : Nat) where
@@ -705,121 +731,122 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 9. 抽象 Resolution 证明系统骨架 + proofLength
+-- 10. Resolution 系统：RClause / RCNF / Derives / proofLength
 ------------------------------------------------------------
 
 namespace Resolution
 
--- 解析子句：任意长度的字面列表
+open StructuralAction
+
+-- 解析子句与 CNF（用 Literal 列表）
 abbrev RClause (n : Nat) := List (Literal n)
+abbrev RCNF   (n : Nat) := List (RClause n)
 
--- 解析 CNF：子句列表
-abbrev RCNF (n : Nat) := List (RClause n)
-
--- 评价解析子句：折叠“或”
-def rclauseEval {n : Nat} (σ : Assignment n) (C : RClause n) : Bool :=
-  C.foldr (fun ℓ acc => literalEval σ ℓ || acc) false
-
--- 评价解析 CNF：所有子句的合取
-def rcnfEval {n : Nat} (σ : Assignment n) (Φ : RCNF n) : Bool :=
-  Φ.foldr (fun C acc => rclauseEval σ C && acc) true
-
--- 把 3-CNF 提升为解析 CNF：
--- 每个 3-子句 (Fin 3 → Literal n) 变成长度为 3 的 List (Literal n)
-def of3CNF {n : Nat} (Φ : CNF n) : RCNF n :=
-  Φ.map (fun C =>
-    [ C ⟨0, by decide⟩
-    , C ⟨1, by decide⟩
-    , C ⟨2, by decide⟩ ])
-
--- 字面取反：同一个 var，neg 取反
+-- 字面取反
 def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
-/-- 抽象的 Resolution 推导关系：
-    注意：我们把它定义在 `Type` 里，而不是 `Prop`，
-    这样可以对证明对象做递归，定义 proofLength。 -/
+-- 评价解析子句
+def RClauseEval {n : Nat} (σ : Assignment n) (C : RClause n) : Bool :=
+  C.foldr (fun ℓ acc => literalEval σ ℓ || acc) false
+
+-- 评价解析 CNF
+def RCNFEval {n : Nat} (σ : Assignment n) (Φ : RCNF n) : Bool :=
+  Φ.foldr (fun C acc => RClauseEval σ C && acc) true
+
+/-- Resolution 推导树：给定基础集合 Φ，推出子句 C。 -/
 inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
-  | axiom {C} (hC : C ∈ Φ) :
+  | axiom (C : RClause n) (hC : C ∈ Φ) :
       Derives Φ C
-  | weaken {C D} (hSub : ∀ ℓ, ℓ ∈ C → ℓ ∈ D) (hC : Derives Φ C) :
-      Derives Φ D
-  | resolve {C D ℓ}
+  | weaken (C C₁ : RClause n)
+      (hSub : ∀ ℓ ∈ C₁, ℓ ∈ C)
+      (hC₁ : Derives Φ C₁) :
+      Derives Φ C
+  | resolve (C D : RClause n)
+      (ℓ : Literal n)
       (hC : Derives Φ (ℓ :: C))
       (hD : Derives Φ (litNeg ℓ :: D)) :
       Derives Φ (C ++ D)
 
-/-- 空子句 [] 代表“假”；Refutation = 能从 Φ 推出空子句。
-    这里用 `Nonempty` 包一下，作为一个命题。 -/
-abbrev Refutation {n : Nat} (Φ : RCNF n) : Prop :=
-  Nonempty (Derives Φ [])
+/-- 反驳：能推出空子句。 -/
+def Refutation {n : Nat} (Φ : RCNF n) : Prop :=
+  Nonempty (Derives Φ ([] : RClause n))
 
-/-- 解析证明的“长度”：对 Derives 证明树做结构递归计数。 -/
+/-- 解析推导的长度（步骤数） -/
 def proofLength {n : Nat} {Φ : RCNF n} {C : RClause n}
     (h : Derives Φ C) : Nat :=
   match h with
-  | Derives.axiom _ => 1
-  | Derives.weaken _ hC => proofLength hC
-  | Derives.resolve hC hD => proofLength hC + proofLength hD + 1
+  | .axiom _ _        => 1
+  | .weaken _ _ _ h₁  => proofLength h₁
+  | .resolve _ _ _ h₁ h₂ =>
+      proofLength h₁ + proofLength h₂ + 1
 
 end Resolution
 
 ------------------------------------------------------------
--- 10. 公理：HardCNF_T 在 Resolution 中可反驳
+-- 11. 一个最小的 Resolution 反例练习：{ {x}, {¬x} } ⊢ []
 ------------------------------------------------------------
 
-axiom HardCNF_T_hasResolutionRefutation (n : Nat) :
-  Resolution.Refutation (Resolution.of3CNF (HardCNF_T n))
+section MiniResolutionExample
 
-------------------------------------------------------------
--- 11. DPLL 作用量与 Resolution 成本的连接
-------------------------------------------------------------
+open Resolution
 
--- 概念上：HardActionDPLL n =
---   在 HardCNF_T n 上，所有合法 DPLL 轨迹 ψ 的最小结构作用量 A[ψ]。
-axiom HardActionDPLL : ActionSeq
+/-- 在 n = 1 时唯一的变量：`x` -/
+def miniVar : Fin 1 := ⟨0, by decide⟩
 
--- 多项式上界假设（算法侧的“反面假设”）
-axiom hardActionDPLL_polyUpper_from_alg :
-  PolyUpper_general HardActionDPLL
+/-- 正字面 `x` -/
+def miniLitPos : Literal 1 :=
+  { var := miniVar, neg := false }
 
-/-- 公理 1：对于 PHPₙ 的 Tseitin 3-CNF，
-    任意一个 Resolution 反驳的长度都具有指数下界 2^n。 -/
-axiom resolutionRefutation_expLower_2pow :
-  ∀ n (π : Resolution.Derives (Resolution.of3CNF (HardCNF_T n)) []),
-    (2 : Nat)^n ≤ Resolution.proofLength π
+/-- 负字面 `¬x` -/
+def miniLitNeg : Literal 1 :=
+  { var := miniVar, neg := true }
 
-/-- 公理 2：结构作用量能够“吸收” Resolution 成本：
-    在 HardCNF_T n 上，任一 Resolution 反驳的长度
-    都不超过 HardActionDPLL n（最小作用量）。 -/
-axiom hardAction_ge_resProofLength :
-  ∀ n (π : Resolution.Derives (Resolution.of3CNF (HardCNF_T n)) []),
-    Resolution.proofLength π ≤ HardActionDPLL n
+/-- 子句 `[x]` -/
+def miniClausePos : RClause 1 := [miniLitPos]
 
-/-- 由 Resolution 指数下界 + 作用量 ≥ 解析长度
-    推出 HardActionDPLL 本身具有指数下界。 -/
-theorem hardActionDPLL_expLower_2pow :
-  ExpLower_2pow HardActionDPLL := by
-  intro n
-  classical
-  -- 从公理拿到一个具体的 refutation π
-  have hRef : Resolution.Refutation (Resolution.of3CNF (HardCNF_T n)) :=
-    HardCNF_T_hasResolutionRefutation n
-  rcases hRef with ⟨π⟩
-  have h1 : (2 : Nat)^n ≤ Resolution.proofLength π :=
-    resolutionRefutation_expLower_2pow n π
-  have h2 : Resolution.proofLength π ≤ HardActionDPLL n :=
-    hardAction_ge_resProofLength n π
-  exact le_trans h1 h2
+/-- 子句 `[¬x]` -/
+def miniClauseNeg : RClause 1 := [miniLitNeg]
 
-/-- 最终的矛盾：同一个 HardActionDPLL 既有指数下界又有 n^2 上界 ⇒ 不可能。 -/
-theorem no_polyTime_DPLL_on_hardFamily : False :=
-  toy_hardFamily_contradiction
-    HardActionDPLL
-    hardActionDPLL_expLower_2pow
-    hardActionDPLL_polyUpper_from_alg
+/-- RCNF Φ := { [x], [¬x] } -/
+def miniRCNF : RCNF 1 :=
+  [miniClausePos, miniClauseNeg]
+
+lemma miniClausePos_mem : miniClausePos ∈ miniRCNF := by
+  simp [miniRCNF, miniClausePos]
+
+lemma miniClauseNeg_mem : miniClauseNeg ∈ miniRCNF := by
+  simp [miniRCNF, miniClauseNeg]
+
+/-- 从 miniRCNF 解析推出空子句 `[]` 的一个具体证明。 -/
+def miniRefutation : Derives miniRCNF ([] : RClause 1) :=
+  Derives.resolve
+    (C := [])
+    (D := [])
+    (ℓ := miniLitPos)
+    -- 左前提：从 Φ 推出 `[x]`，也就是 `(ℓ :: [])`
+    (hC := by
+      have hA : Derives miniRCNF miniClausePos :=
+        Derives.axiom (Φ := miniRCNF) (C := miniClausePos) miniClausePos_mem
+      simpa [miniClausePos] using hA
+    )
+    -- 右前提：从 Φ 推出 `[¬x]`，也就是 `(litNeg ℓ :: [])`
+    (hD := by
+      have hA : Derives miniRCNF miniClauseNeg :=
+        Derives.axiom (Φ := miniRCNF) (C := miniClauseNeg) miniClauseNeg_mem
+      have hlit : litNeg miniLitPos = miniLitNeg := by
+        simp [litNeg, miniLitPos, miniLitNeg]
+      simpa [miniClauseNeg, hlit] using hA
+    )
+
+/-- 证明：`miniRCNF` 在 Resolution 系统中是可反驳的。 -/
+lemma miniRCNF_hasRefutation : Refutation miniRCNF :=
+  ⟨miniRefutation⟩
+
+end MiniResolutionExample
 
 end StructuralAction
+
 
 
 
