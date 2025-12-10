@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- ★★ 加上 DecidableEq，修复 Finset.image 的需求
+  deriving Repr, DecidableEq   -- ★★ 这里加上 DecidableEq
 
 -- 子句：3 个字面
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -726,7 +726,7 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 证明系统的抽象骨架 + HardCNF_T 的解析视角
+-- 10. Resolution 证明系统：规则、证明对象、空子句派生
 ------------------------------------------------------------
 
 namespace Resolution
@@ -758,8 +758,28 @@ noncomputable
 def HardResFormula (n : Nat) : Formula (HardVarT n) :=
   formulaOfStructCNF (HardCNF_T n)
 
-/-- “Φ 经解析推导出空子句”的谓词（抽象公理化）。 -/
-axiom ResDerivesEmpty : ∀ {n : Nat}, Formula n → Prop
+/-!
+  解析推理系统的构造性定义：
+  `ResProof Γ C` 表示：从初始公式 Γ 出发，
+  用有限次解析规则（外加弱化）可以推出子句 C。
+-/
+inductive ResProof {n : Nat} (Γ : Formula n) : Clause n → Prop where
+  | axiom {C : Clause n}
+      (hC : C ∈ Γ) :
+      ResProof Γ C
+  | weaken {C D : Clause n}
+      (hSub : C ⊆ D)
+      (hC : ResProof Γ C) :
+      ResProof Γ D
+  | resolve {C D : Clause n} {ℓ : Literal n}
+      (hC : ResProof Γ (insert ℓ C))
+      (hD : ResProof Γ (insert (litNeg ℓ) D)) :
+      ResProof Γ (C ∪ D)
+
+/-- “Γ 经解析推导出空子句”的谓词：
+    完全构造性版本：存在一个 `ResProof Γ ∅`。 -/
+def ResDerivesEmpty {n : Nat} (Γ : Formula n) : Prop :=
+  ResProof Γ (∅ : Clause n)
 
 /-- 解析系统对 HardCNF_T 的**语义正确性**：
     若解析系统从 HardResFormula n 推导出空子句，
