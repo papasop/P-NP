@@ -249,7 +249,7 @@ axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
     StructuralAction.cnfEval σ (to3CNF Φ) = true
 
 ------------------------------------------------------------
--- 3b. Tseitin 转换骨架 + Equisatisfiability 证明（骨架版）
+-- 3b. Tseitin 转换骨架 + Equisatisfiability 证明
 ------------------------------------------------------------
 
 section Tseitin
@@ -637,7 +637,7 @@ theorem no_polyTime_on_family
   toy_hardFamily_contradiction A hLower hUpper
 
 ------------------------------------------------------------
--- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族（仍用公理）
+-- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
 ------------------------------------------------------------
 
 axiom HardActionDPLL : ActionSeq
@@ -731,341 +731,129 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 系统：RClause / RCNF / Derives / proofLength
+-- 10. ResolutionToy：解析证明系统 + 证明长度
 ------------------------------------------------------------
 
-namespace Resolution
+namespace ResolutionToy
 
 open StructuralAction
+open PigeonholeFamily
 
--- 解析子句与 CNF（用 Literal 列表）
+-- 解析子句：用 Literal 列表表示
 abbrev RClause (n : Nat) := List (Literal n)
-abbrev RCNF   (n : Nat) := List (RClause n)
 
--- 字面取反
+-- 解析 CNF（子句集合）
+abbrev RCNF (n : Nat) := List (RClause n)
+
+/-- 字面的“否定”：同一变量，取反 neg 标志。 -/
 def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
--- 评价解析子句
-def RClauseEval {n : Nat} (σ : Assignment n) (C : RClause n) : Bool :=
-  C.foldr (fun ℓ acc => literalEval σ ℓ || acc) false
+/-- 解析系统中的证明对象：从前提 Φ 推出结论子句 C 的证明树。
 
--- 评价解析 CNF
-def RCNFEval {n : Nat} (σ : Assignment n) (Φ : RCNF n) : Bool :=
-  Φ.foldr (fun C acc => RClauseEval σ C && acc) true
+  构造器：
+  * `ax` : 直接使用 Φ 中的某个子句；
+  * `wk` : 子句弱化（超集）；
+  * `res` : 解析规则。 -/
+inductive ResProof (n : Nat) (Φ : RCNF n) : RClause n → Type where
+  | ax {C} (hC : C ∈ Φ) :
+      ResProof n Φ C
+  | wk {C D} (hSub : ∀ ℓ ∈ C, ℓ ∈ D)
+        (hC : ResProof n Φ C) :
+      ResProof n Φ D
+  | res {C D} (ℓ : Literal n)
+        (hC : ResProof n Φ (ℓ :: C))
+        (hD : ResProof n Φ (litNeg ℓ :: D)) :
+      ResProof n Φ (C ++ D)
 
-/-- Resolution 推导树：给定基础集合 Φ，推出子句 C。 -/
-inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
-  | axiom (C : RClause n) (hC : C ∈ Φ) :
-      Derives Φ C
-  | weaken (C C₁ : RClause n)
-      (hSub : ∀ ℓ ∈ C₁, ℓ ∈ C)
-      (hC₁ : Derives Φ C₁) :
-      Derives Φ C
-  | resolve (C D : RClause n)
-      (ℓ : Literal n)
-      (hC : Derives Φ (ℓ :: C))
-      (hD : Derives Φ (litNeg ℓ :: D)) :
-      Derives Φ (C ++ D)
-
-/-- 反驳：能推出空子句。 -/
-def Refutation {n : Nat} (Φ : RCNF n) : Prop :=
-  Nonempty (Derives Φ ([] : RClause n))
-
-/-- 解析推导的长度（步骤数） -/
+/-- 解析证明的“长度”：粗略计数规则应用次数。 -/
 def proofLength {n : Nat} {Φ : RCNF n} {C : RClause n}
-    (h : Derives Φ C) : Nat :=
-  match h with
-  | .axiom _ _        => 1
-  | .weaken _ _ _ h₁  => proofLength h₁
-  | .resolve _ _ _ h₁ h₂ =>
-      proofLength h₁ + proofLength h₂ + 1
+    (π : ResProof n Φ C) : Nat :=
+  match π with
+  | .ax _        => 1
+  | .wk _ hC     => proofLength hC + 1
+  | .res _ hC hD => proofLength hC + proofLength hD + 1
 
-end Resolution
+end ResolutionToy
 
 ------------------------------------------------------------
--- 11. 一个最小的 Resolution 反例练习：{ {x}, {¬x} } ⊢ []
-------------------------------------------------------------
-
-section MiniResolutionExample
-
-open Resolution
-
-/-- 在 n = 1 时唯一的变量：`x` -/
-def miniVar : Fin 1 := ⟨0, by decide⟩
-
-/-- 正字面 `x` -/
-def miniLitPos : Literal 1 :=
-  { var := miniVar, neg := false }
-
-/-- 负字面 `¬x` -/
-def miniLitNeg : Literal 1 :=
-  { var := miniVar, neg := true }
-
-/-- 子句 `[x]` -/
-def miniClausePos : RClause 1 := [miniLitPos]
-
-/-- 子句 `[¬x]` -/
-def miniClauseNeg : RClause 1 := [miniLitNeg]
-
-/-- RCNF Φ := { [x], [¬x] } -/
-def miniRCNF : RCNF 1 :=
-  [miniClausePos, miniClauseNeg]
-
-lemma miniClausePos_mem : miniClausePos ∈ miniRCNF := by
-  simp [miniRCNF, miniClausePos]
-
-lemma miniClauseNeg_mem : miniClauseNeg ∈ miniRCNF := by
-  simp [miniRCNF, miniClauseNeg]
-
-/-- 从 miniRCNF 解析推出空子句 `[]` 的一个具体证明。 -/
-def miniRefutation : Derives miniRCNF ([] : RClause 1) :=
-  Derives.resolve
-    (C := [])
-    (D := [])
-    (ℓ := miniLitPos)
-    -- 左前提：从 Φ 推出 `[x]`，也就是 `(ℓ :: [])`
-    (hC := by
-      have hA : Derives miniRCNF miniClausePos :=
-        Derives.axiom (Φ := miniRCNF) (C := miniClausePos) miniClausePos_mem
-      simpa [miniClausePos] using hA
-    )
-    -- 右前提：从 Φ 推出 `[¬x]`，也就是 `(litNeg ℓ :: [])`
-    (hD := by
-      have hA : Derives miniRCNF miniClauseNeg :=
-        Derives.axiom (Φ := miniRCNF) (C := miniClauseNeg) miniClauseNeg_mem
-      have hlit : litNeg miniLitPos = miniLitNeg := by
-        simp [litNeg, miniLitPos, miniLitNeg]
-      simpa [miniClauseNeg, hlit] using hA
-    )
-
-/-- 证明：`miniRCNF` 在 Resolution 系统中是可反驳的。 -/
-lemma miniRCNF_hasRefutation : Refutation miniRCNF :=
-  ⟨miniRefutation⟩
-
-end MiniResolutionExample
-------------------------------------------------------------
--- 10. 抽象 DPLL 状态 / 模型 / 结构作用量密度 λ
---
--- 目标：先给出一个“足够抽象”的 DPLL 算法模型 A_DPLL，
---      让后续可以在它上面谈：
---        • 计算轨迹 ψ : ComputationPath A_DPLL Φ
---        • 结构作用量 A[ψ] = ∑ λ(s_t)
---      再逐步把它和 Resolution 证明联系起来。
+-- 11. AbstractDPLL：把 Resolution 证明映射到 DPLL 作用量下界
 ------------------------------------------------------------
 
 namespace AbstractDPLL
 
 open StructuralAction
+open ResolutionToy
 
-/-- 抽象的 DPLL 状态：
+/-- 抽象的 DPLL 风格算法模型（依赖变量个数 n）。
 
-* `formula`    ：当前正在求解的 CNF 公式（原始子句集 + 学习子句都可以塞进去）
-* `assignment` ：当前布尔赋值（包含决策 + 单位传播）
-* `decisions`  ：决策 trail（栈），这里只记录字面即可，后面可以细化为带 decision level 的 trail
-* `conflict`   ：当前是否处于冲突状态（例如某个子句在当前赋值下为假）
+  未来你会用真正的 DPLL/CDCL 状态与转移规则来实例化它。
+  目前我们只把它当成一个黑盒的 AlgorithmModel。 -/
+axiom model (n : Nat) : AlgorithmModel n
 
-目前这是一个**极简骨架**，后面你可以往里面加：
-* `learnt` 子句
-* decision level / implication graph 信息
-* 甚至直接附加一个 Resolution 证明 trace
+/-- DPLL 状态上的结构密度 λ' ：
+    将来你会把它换成真正的“能量/冲突/决策层数”等结构指标。 -/
+axiom density (n : Nat) : (model n).StateType → Nat
+
+/--
+`Simulation ΦR C π` 描述了：
+* 给定一个 Resolution 证明 π : ResProof n ΦR C，
+* 存在某个 3-SAT 公式 ΦC : CNF n，
+* 和在 `model n` 上、关于 ΦC 的一条计算路径 `path`，
+* 使得该路径的离散作用量（使用 density n）下界
+  主导 Resolution 证明长度：
+
+      proofLength π + 1 ≤ A_nat[ψ]
+
+这是“Resolution → DPLLPath”的抽象桥梁数据结构。
 -/
-structure State (n : Nat) where
-  formula    : CNF n
-  assignment : Assignment n
-  decisions  : List (Literal n)
-  conflict   : Bool
-  deriving Repr
+structure Simulation {n : Nat}
+    (ΦR : RCNF n) (C : RClause n)
+    (π : ResProof n ΦR C) where
+  ΦC   : CNF n
+  path : ComputationPath (model n) ΦC
+  action_ge_length :
+    proofLength π + 1 ≤
+      pathActionNat (model n) ΦC (density n) path
 
-/-- 抽象 DPLL 单步转移：
+/--
+抽象公理：每一个 Resolution 证明 π 都可以被某个 DPLL 轨迹
+在作用量意义下“模拟”，且该轨迹的作用量不小于证明长度。
 
-目前先用恒等映射作为占位实现：
+这一条就是未来你要用具体 DPLL 语义 + λ' 来真正证明的核心定理，
+这里先作为接口层面的 axiom。 -/
+axiom exists_simulation
+  {n : Nat} (ΦR : RCNF n)
+  (C : RClause n)
+  (π : ResProof n ΦR C) :
+  Simulation ΦR C π
 
-* 这样可以先把 `AlgorithmModel`、`ComputationPath`、`action` 这些
-  形式结构全部接起来。
-* 真正的 DPLL 逻辑（决策 / 单位传播 / 回溯 / 学习子句）可以日后往
-  `stepState` 里替换，而不会破坏已有的抽象定理结构。
+/--
+**Action ≥ Resolution proof length（抽象骨架版）**
+
+给定任意 Resolution 证明 π，我们可以找到：
+
+* 某个 3-SAT 公式 ΦC : CNF n，
+* 某条 DPLL 风格的计算路径 ψ，
+
+使得（用 λ' 作为密度的 pathActionNat）满足：
+
+    pathActionNat (model n) ΦC (density n) ψ ≥ proofLength π + 1
 -/
-def stepState {n : Nat} (_Φ : CNF n) (s : State n) : State n :=
-  s
-
-/-- 抽象 DPLL 停机条件：
-
-目前也先给一个“永不停机”的占位版本 `False`，这样：
-
-* 任何有限长的 `ComputationPath` 都只是你手工给出的一个前缀轨迹；
-* 形式上我们不强制“自然停机”，而是把“停机状态”交给后面具体化。
-
-后面你可以把它改成更真实的性质，例如：
-
-* “当前赋值满足 `formula`”，或者
-* “产生不可修复冲突且所有变量已决定”。
--/
-def haltingState {n : Nat} (_Φ : CNF n) (_s : State n) : Prop :=
-  False
-
-/-- 把上述抽象状态 / 步进规则打包成一个 `AlgorithmModel`。 -/
-def Model (n : Nat) : AlgorithmModel n :=
-{ StateType := State n
-, init := fun Φ =>
-    { formula    := Φ
-    , assignment := fun _ => false
-    , decisions  := []
-    , conflict   := false }
-, step := fun Φ s => stepState Φ s
-, halting := fun Φ s => haltingState Φ s }
-
-/-- 抽象 DPLL 的结构密度 λ：
-
-目前版本：**每个状态的 λ(s) = 1**。
-
-* 这样可以立刻结合你已经证明的 `pathActionNat_ge_time`，
-  得到一个非常粗的下界：A[ψ] ≥ T+1。
-* 将来你想让 Action 精确反映 Resolution 证明长度时，
-  可以把这个定义升级为：
-  - 按决策步计权，
-  - 或按“学习子句 / 回溯阶数 / 冲突次数”计权，
-  再重新用同样的抽象引理包装复杂度信息。
--/
-noncomputable
-def density {n : Nat} (_s : State n) : Nat :=
-  1
-
-/-- 在抽象 DPLL 模型上的结构作用量：
-    A_DPLL[ψ] = ∑_{t=0}^T λ(s_t)。 -/
-noncomputable
-def action {n : Nat} (Φ : CNF n)
-    (ψ : ComputationPath (Model n) Φ) : Nat :=
-  pathActionNat (A := Model n) Φ density ψ
-
-/-- 利用第 9 节的一般下界引理 `pathActionNat_ge_time`，
-    直接得到抽象 DPLL 作用量的一个“时间下界”：
-
-> 若 λ(s_t) ≥ 1，则 A[ψ] ≥ T+1。
-
-在当前版本，因为 `density` 恒等于 1，这个条件是立刻满足的。 -/
-lemma action_ge_time {n : Nat} (Φ : CNF n)
-    (ψ : ComputationPath (Model n) Φ) :
-    ψ.T + 1 ≤ action Φ ψ := by
-  -- 套用通用引理：把 `density` 和它的“每步 ≥ 1”条件代进去
-  have h :=
-    pathActionNat_ge_time
-      (A := Model n)
-      (density := density)
-      (Φ := Φ)
-      (ψ := ψ)
-      (hPos := by
-        intro Φ' ψ' t
-        -- 由于 density 恒为 1，这里直接 `simp`
-        simp [density])
-  simpa [action] using h
+theorem action_ge_resProofLength
+  {n : Nat} (ΦR : RCNF n)
+  (C : RClause n)
+  (π : ResProof n ΦR C) :
+  ∃ (ΦC : CNF n) (ψ : ComputationPath (model n) ΦC),
+    proofLength π + 1 ≤
+      pathActionNat (model n) ΦC (density n) ψ := by
+  -- 从抽象 simulation 中解包出 ΦC, ψ 和不等式即可
+  rcases exists_simulation ΦR C π with ⟨ΦC, ψ, hψ⟩
+  exact ⟨ΦC, ψ, hψ⟩
 
 end AbstractDPLL
-/-! ------------------------------------------------------------
-### 10. TimeModel：一个只负责“计步”的极简算法模型
-
-这个模型完全不关心 SAT / DPLL 细节，只做一件事：
-给你一个路径 ψ，它的状态就是自然数，step 就是 s ↦ s+1。
------------------------------------------------------------- -/
-
-namespace TimeModel
-
-/-- 极简版本的算法模型：
-    * 状态类型就是 `Nat`
-    * `init Φ = 0`
-    * `step Φ s = s + 1`
-    * `halting Φ s := True`（总是视作“停机”，只是为了满足结构） -/
-def model (n : Nat) : AlgorithmModel n :=
-{ StateType := Nat
-, init      := fun _Φ => 0
-, step      := fun _Φ s => s + 1
-, halting   := fun _Φ _s => True }
-
-/-- 给定一个“目标长度” `L : ℕ`，在 `TimeModel n` 上构造一条路径：  
-    * 总步数 `T = L`
-    * 第 t 个状态就是 `t.1`（从 0 数到 L）
-    * step 恰好是前一个状态加一 -/
-def pathOfLength {n : Nat} (Φ : CNF n) (L : Nat) :
-    ComputationPath (model n) Φ :=
-{ T      := L
-, states := fun t => t.1
-, h_init := by
-    -- t = 0 时，states 0 = 0 = init
-    rfl
-, h_step := by
-    -- 对任意 t < T，states (succ t) = states t + 1
-    intro t
-    -- 左边：states ⟨t.1.succ, _⟩ = t.1.succ
-    -- 右边：step Φ (states ⟨t.1, _⟩) = (states ...) + 1 = t.1 + 1
-    -- 两边都是自然数的后继，所以 rfl。
-    rfl
-, h_halt := by
-    -- halting 恒为 True
-    trivial }
-
-/-- 方便引理：这条路径的时间步数就是你给的 L。 -/
-@[simp]
-lemma pathOfLength_time {n : Nat} (Φ : CNF n) (L : Nat) :
-    (pathOfLength Φ L).T = L := rfl
-
-/-- 再一个方便引理：在第 t 个时间点的状态就是 t.1。 -/
-@[simp]
-lemma pathOfLength_state {n : Nat} (Φ : CNF n) (L : Nat)
-    (t : Fin (L + 1)) :
-    (pathOfLength Φ L).states t = t.1 := rfl
-
-end TimeModel
-
-
-/-! ------------------------------------------------------------
-### 11. Resolution 长度 → DPLLPath 接口骨架
-
-这里我们只提供一个“桥接接口”：
-给定一个“期望长度” L，把它变成 TimeModel 上的一条路径。
-
-将来你在 `namespace Resolution` 里定义好：
-
-* `ResProof n Φ C`
-* `proofLength : ResProof n Φ C → ℕ`
-
-之后，就可以用：
-
-* `ResolutionBridge.fromLength Φ (proofLength π)`
-
-得到一条时间长度 = 证明长度 的路径，然后配合
-`pathActionNat_ge_time` 得到 `Action ≥ proofLength`.
------------------------------------------------------------- -/
-
-namespace ResolutionBridge
-
-open TimeModel
-
-/-- 把一个“长度” `L` 转换成在 `TimeModel n` 上的一条路径。 -/
-def fromLength {n : Nat} (Φ : CNF n) (L : Nat) :
-    ComputationPath (model n) Φ :=
-  pathOfLength Φ L
-
-/-- 这条路径的时间步数 = L。 -/
-@[simp]
-lemma fromLength_time {n : Nat} (Φ : CNF n) (L : Nat) :
-    (fromLength Φ L).T = L := by
-  simpa [fromLength] using
-    (pathOfLength_time (Φ := Φ) (L := L))
-
-/-- 在时间 t 的状态就是 t.1（同 `pathOfLength_state`）。 -/
-@[simp]
-lemma fromLength_state {n : Nat} (Φ : CNF n) (L : Nat)
-    (t : Fin (L + 1)) :
-    (fromLength Φ L).states t = t.1 := by
-  simpa [fromLength] using
-    (pathOfLength_state (Φ := Φ) (L := L) (t := t))
-
-end ResolutionBridge
 
 end StructuralAction
-
-
-
 
 
 
