@@ -15,7 +15,7 @@ abbrev Assignment (n : Nat) := Fin n → Bool
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- ★★ 这里加上 DecidableEq
+  deriving Repr
 
 -- 子句：3 个字面
 abbrev Clause (n : Nat) := Fin 3 → Literal n
@@ -79,7 +79,7 @@ lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   simpa [satSet] using (cnfEval_true_iff_energy_zero (Φ := Φ) (σ := σ))
 
 ------------------------------------------------------------
--- 3. 一般 CNF（变长子句）和 3-SAT 转换 to3CNF（旧版 padding）
+-- 3. 一般 CNF（变长子句） + toy 3-SAT 转换 to3CNF（仅做 padding，不再声称等价）
 ------------------------------------------------------------
 
 namespace PigeonholeFamily
@@ -120,6 +120,7 @@ def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
 
 ------------------------------------------------------------
 -- 3a. 单个子句的 3-SAT 转换：soundness（非空子句）
+--     只证明：to3CNFClause Γ 为真 ⇒ Γ 为真（不声称“等价”）
 ------------------------------------------------------------
 
 lemma to3CNFClause_sound_nonempty
@@ -199,6 +200,8 @@ lemma to3CNFClause_sound_nonempty
                   -- 先从 h 中把“首个 3-子句为真”拆出来
                   have hTriple :
                       StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
+                    -- h : cnfEval σ (mkClause3 a b c :: to3CNFClause (d::rest)) = true
+                    -- simp 后得到一个 ∧，取 .1 即首子句为真
                     have h' := h
                     simp [to3CNFClause, StructuralAction.cnfEval] at h'
                     exact h'.1
@@ -216,9 +219,11 @@ lemma to3CNFClause_sound_nonempty
                         || StructuralAction.literalEval σ b
                         || StructuralAction.literalEval σ c
                         || genClauseEval σ (d :: rest)) = true := by
+                    -- 对等式 hOr3 两边同时做 “|| genClauseEval σ (d :: rest)”
                     have := congrArg
                       (fun b =>
                         b || genClauseEval σ (d :: rest)) hOr3
+                    -- RHS: true || R = true
                     simpa [Bool.true_or, Bool.or_assoc] using this
                   -- 把 genClauseEval 展开成同样的 OR 结构
                   have hShape :
@@ -230,115 +235,55 @@ lemma to3CNFClause_sound_nonempty
                         || genClauseEval σ (d :: rest)) := by
                     simp [genClauseEval,
                           Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
+                  -- 用 hOr4 + hShape 得到结论
                   have := hOr4
                   simpa [hShape] using this
 
--- 旧版 3-SAT 转换：对每个一般子句做 to3CNFClause，然后拼接
+-- toy 版本 3-SAT 转换（只做 padding，不再声称“等价”）
 def to3CNF {n : Nat} (Φ : GenCNF n) : StructuralAction.CNF n :=
   Φ.foldr (fun Γ acc => to3CNFClause Γ ++ acc) []
 
--- 3-CNF 转换的“满足性规格”：占位未来的严格证明（旧接口）
-axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
-  ∀ σ : StructuralAction.Assignment n,
-    genCNFEval σ Φ = true ↔
-    StructuralAction.cnfEval σ (to3CNF Φ) = true
-
 ------------------------------------------------------------
--- 3b. Tseitin 转换骨架 + Equisatisfiability 证明
+-- 3b. Tseitin 转换：抽象公理版本（真正负责 Equisatisfiability）
 ------------------------------------------------------------
 
 section Tseitin
 
--- Tseitin 转换的结果：
---   原公式有 n 个变量，Tseitin 之后有 n + auxVars 个变量，
---   并给出一个 3-CNF（Clause 统一本在 CNF (n + auxVars) 上）。
+/-- Tseitin 转换的结果：
+    原公式有 n 个变量，Tseitin 之后有 n + auxVars 个变量，
+    并给出一个 3-CNF。 -/
 structure TseitinResult (n : Nat) where
   auxVars : Nat
   cnf     : StructuralAction.CNF (n + auxVars)
 
--- 把 Fin n 提升到 Fin (n + aux)
-def liftFin {n aux : Nat} (i : Fin n) : Fin (n + aux) :=
-  ⟨i.1, by
-     have hi : i.1 < n := i.2
-     have hle : n ≤ n + aux := Nat.le_add_right _ _
-     exact Nat.lt_of_lt_of_le hi hle⟩
+/-- 抽象的 Tseitin 转换：给一个 GenCNF，返回一个 TseitinResult。 -/
+axiom tseitinOfGenCNF {n : Nat} :
+  GenCNF n → TseitinResult n
 
--- 把 Literal n 提升到 Literal (n + aux)
-def liftLiteral {n aux : Nat}
-    (ℓ : StructuralAction.Literal n) :
-    StructuralAction.Literal (n + aux) :=
-  { var := liftFin (n := n) (aux := aux) ℓ.var
-  , neg := ℓ.neg }
-
--- 把 GenClause n 提升为 GenClause (n + aux)
-def liftGenClause {n aux : Nat}
-    (Γ : GenClause n) : GenClause (n + aux) :=
-  Γ.map (fun ℓ => liftLiteral (n := n) (aux := aux) ℓ)
-
-/-
-  真正的 Tseitin 将会在这里引入 fresh 变量并构造 3-CNF。
-  目前骨架版本先不引入新变量，只是保持接口形状：
-  auxVars = 0，cnf = to3CNF Φ。
--/
-
--- 单个变长子句的 Tseitin 3-CNF 编码（目前未使用，先保留骨架）
-noncomputable
-def tseitinOfGenClause {n : Nat}
-    (Γ : GenClause n) : TseitinResult n :=
-  { auxVars := 0
-  , cnf     := to3CNFClause Γ }
-
--- 整个 GenCNF 的 Tseitin 3-CNF 编码（骨架版：直接用 to3CNF）
-noncomputable
-def tseitinOfGenCNF {n : Nat}
-    (Φ : GenCNF n) : TseitinResult n :=
-  { auxVars := 0
-  , cnf     := to3CNF Φ }
-
-/-- Tseitin 方向 1：
-    若原始 GenCNF 可满足，则 Tseitin 3-CNF 也可满足。 -/
-lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
+/-- Tseitin 方向 1（soundness）：
+    若原始公式 Φ 在某个赋值 σ 下可满足，
+    则存在一个扩展赋值 σ' 使 Tseitin CNF 也可满足。 -/
+axiom tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
   (∃ σ : StructuralAction.Assignment n,
       genCNFEval σ Φ = true)
   →
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
-      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true) := by
-  intro h
-  classical
-  rcases h with ⟨σ, hσ⟩
-  -- 由于 auxVars = 0，Assignment (n + aux) 与 Assignment n 直接相等
-  refine ⟨σ, ?_⟩
-  -- 用旧的 to3CNF_equisat 把 genCNFEval ⇒ cnfEval
-  have hCnf : StructuralAction.cnfEval σ (to3CNF Φ) = true :=
-    (to3CNF_equisat (Φ := Φ) (σ := σ)).mp hσ
-  -- 再把 tseitinOfGenCNF Φ 展开成 to3CNF Φ
-  simpa [tseitinOfGenCNF] using hCnf
+      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
 
-/-- Tseitin 方向 2：
-    若 Tseitin 3-CNF 可满足，则原始 GenCNF 也可满足。 -/
-lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
+/-- Tseitin 方向 2（completeness）：
+    若 Tseitin CNF 在某个扩展赋值 σ' 下可满足，
+    则原始公式 Φ 在某个（前 n 个变量的）赋值下也可满足。 -/
+axiom genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
       StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
   →
   (∃ σ : StructuralAction.Assignment n,
-      genCNFEval σ Φ = true) := by
-  intro h
-  classical
-  rcases h with ⟨σ', hσ'⟩
-  -- 同样利用 auxVars = 0，直接把 σ' 当作原变量赋值使用
-  refine ⟨σ', ?_⟩
-  -- 先把 Tseitin CNF 展开为 to3CNF Φ，并用 to3CNF_equisat 的逆向
-  have hGen : genCNFEval σ' Φ = true :=
-    (to3CNF_equisat (Φ := Φ) (σ := σ')).mpr
-      (by
-        -- 证明 cnfEval σ' (to3CNF Φ) = true 与 hσ' 同构
-        simpa [tseitinOfGenCNF] using hσ')
-  exact hGen
+      genCNFEval σ Φ = true)
 
 end Tseitin
 
 ------------------------------------------------------------
--- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
+-- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族（基于 GenCNF）
 ------------------------------------------------------------
 
 -- 第 n 个鸽子：共有 n+1 只鸽子
@@ -434,12 +379,12 @@ noncomputable
 def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
--- PHPₙ 的 3-SAT 编码（旧接口）：HardCNF = to3CNF (PHP_fullGenCNF)
+-- 旧 toy 接口：PHP 的 padding 3-CNF（不再用于主逻辑，只保留以备玩耍）
 noncomputable
 def PHPcnf (n : Nat) : StructuralAction.CNF (PHPVar n) :=
   to3CNF (PHP_fullGenCNF n)
 
--- PHP_fullGenCNF 的语义桥接：SAT ↔ 存在单射 f : Pigeon → Hole
+/-- PHP_fullGenCNF 的语义桥接：SAT ↔ 存在单射 f : Pigeon → Hole。 -/
 axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
   (∃ σ : StructuralAction.Assignment (PHPVar n),
      genCNFEval σ (PHP_fullGenCNF n) = true)
@@ -472,7 +417,7 @@ lemma no_injection_Pigeon_to_Hole (n : Nat) :
 end PigeonholeMath
 
 ------------------------------------------------------------
--- 6. 从 PHP_fullGenCNF 到 3-CNF PHPcnf 的 UNSAT 逻辑链
+-- 6. 从 PHP_fullGenCNF 到 Tseitin 3-CNF HardCNF_T 的 UNSAT 逻辑链
 ------------------------------------------------------------
 
 section PHPUnsat
@@ -488,42 +433,6 @@ lemma PHP_fullGenCNF_unsat (n : Nat) :
       ∃ f : Pigeon n → Hole n, Function.Injective f :=
     (PHP_fullGenCNF_sat_iff_injection n).1 hSat
   exact no_injection_Pigeon_to_Hole n hInj
-
--- HardCNF n = PHPcnf n：3-SAT 形式的鸽笼公式
-noncomputable
-def HardCNF (n : Nat) : CNF (PHPVar n) :=
-  PHPcnf n
-
--- 对任意赋值 σ，HardCNF n 在 σ 下为 false（不可满足）
-lemma HardCNF_unsat (n : Nat) :
-  ∀ σ : Assignment (PHPVar n),
-    cnfEval σ (HardCNF n) = false := by
-  intro σ
-  classical
-  have hUnsatGen := PHP_fullGenCNF_unsat n
-  have hNotSatCnf : ¬ cnfEval σ (HardCNF n) = true := by
-    intro hSat
-    -- 利用 to3CNF_equisat，把 3-CNF 的可满足性拉回 GenCNF
-    have hEquiv :=
-      to3CNF_equisat
-        (Φ := PHP_fullGenCNF n) (σ := σ)
-    have hSat3 :
-        cnfEval σ (to3CNF (PHP_fullGenCNF n)) = true := by
-      simpa [HardCNF, PHPcnf] using hSat
-    have hSatGen :
-        genCNFEval σ (PHP_fullGenCNF n) = true :=
-      hEquiv.mpr hSat3
-    exact hUnsatGen ⟨σ, hSatGen⟩
-  -- Bool 只有 true / false 两种情况
-  have hOr :
-      cnfEval σ (HardCNF n) = true ∨
-      cnfEval σ (HardCNF n) = false := by
-    cases h' : cnfEval σ (HardCNF n) <;> simp [h']
-  cases hOr with
-  | inl hTrue =>
-      exact False.elim (hNotSatCnf hTrue)
-  | inr hFalse =>
-      exact hFalse
 
 end PHPUnsat
 
@@ -567,7 +476,7 @@ lemma HardCNF_T_unsat (n : Nat) :
       -- 展开 HardCNF_T 和 HardVarT，类型刚好对上
       simpa [HardCNF_T, HardVarT] using hSat
 
-    -- 用 Tseitin 的 “sat ⇒ genSat” 定理，把满足性拉回到原始 GenCNF
+    -- 用 Tseitin 的 “sat ⇒ genSat” 公理，把满足性拉回到原始 GenCNF
     have hGenSat :
         ∃ σ₀ : Assignment (PHPVar n),
           genCNFEval σ₀ (PHP_fullGenCNF n) = true :=
@@ -632,7 +541,7 @@ theorem no_polyTime_on_family
   toy_hardFamily_contradiction A hLower hUpper
 
 ------------------------------------------------------------
--- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
+-- 8. 把 HardCNF_T（Tseitin 版 PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
 ------------------------------------------------------------
 
 axiom HardActionDPLL : ActionSeq
@@ -673,12 +582,14 @@ structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
 
 open Finset
 
+-- 离散结构作用量：对路径上所有状态的密度求和
 def pathActionNat {n : Nat} (A : AlgorithmModel n) (Φ : CNF n)
     (density : A.StateType → Nat)
     (ψ : ComputationPath A Φ) : Nat :=
   (Finset.univ : Finset (Fin (ψ.T + 1))).sum
     (fun t => density (ψ.states t))
 
+-- 下界引理：若每一步 density ≥ 1，则作用量 ≥ (T+1)
 lemma pathActionNat_ge_time
     {n : Nat} (A : AlgorithmModel n)
     (density : A.StateType → Nat)
@@ -692,6 +603,7 @@ lemma pathActionNat_ge_time
       1 ≤ density (ψ.states t) :=
     fun t => hPos Φ ψ t
 
+  -- ∑ 1 ≤ ∑ density
   have h_sum_le :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
       ≤
@@ -701,6 +613,7 @@ lemma pathActionNat_ge_time
     intro t ht
     exact h_each t
 
+  -- 常数和：∑_t 1 = card * 1 = (T+1)
   have h_sum_const :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
         = ψ.T + 1 := by
@@ -724,89 +637,6 @@ lemma pathActionNat_ge_time
     simpa [h_sum_const] using h_sum_le
 
   simpa [pathActionNat] using h_final
-
-------------------------------------------------------------
--- 10. Resolution 证明系统：规则、证明对象、空子句派生
-------------------------------------------------------------
-
-namespace Resolution
-
-open StructuralAction
-
-/-- 解析系统中的子句：有限集合形式的字面集（无序、无重复）。 -/
-abbrev Clause (n : Nat) := Finset (Literal n)
-
-/-- 解析 CNF 公式：子句的列表。 -/
-abbrev Formula (n : Nat) := List (Clause n)
-
-/-- 字面取反：保留变量索引，只翻转 `neg` 标志。 -/
-def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
-  { var := ℓ.var, neg := !ℓ.neg }
-
-/-- 把结构 3-子句转换成解析子句（Finset），忽略顺序和重复。 -/
-def clauseOfStructClause {n : Nat}
-    (C : StructuralAction.Clause n) : Clause n :=
-  (Finset.univ.image fun i : Fin 3 => C i)
-
-/-- 把结构 CNF（List 的 3-子句）转换成解析 CNF（List 的 Finset 子句）。 -/
-def formulaOfStructCNF {n : Nat}
-    (Φ : StructuralAction.CNF n) : Formula n :=
-  Φ.map clauseOfStructClause
-
-/-- PHP Tseitin 困难族在解析系统里的公式表示。 -/
-noncomputable
-def HardResFormula (n : Nat) : Formula (HardVarT n) :=
-  formulaOfStructCNF (HardCNF_T n)
-
-/-!
-  解析推理系统的构造性定义：
-  `ResProof Γ C` 表示：从初始公式 Γ 出发，
-  用有限次解析规则（外加弱化）可以推出子句 C。
--/
-inductive ResProof {n : Nat} (Γ : Formula n) : Clause n → Prop where
-  | axiom {C : Clause n}
-      (hC : C ∈ Γ) :
-      ResProof Γ C
-  | weaken {C D : Clause n}
-      (hSub : C ⊆ D)
-      (hC : ResProof Γ C) :
-      ResProof Γ D
-  | resolve {C D : Clause n} {ℓ : Literal n}
-      (hC : ResProof Γ (insert ℓ C))
-      (hD : ResProof Γ (insert (litNeg ℓ) D)) :
-      ResProof Γ (C ∪ D)
-
-/-- “Γ 经解析推导出空子句”的谓词：
-    完全构造性版本：存在一个 `ResProof Γ ∅`。 -/
-def ResDerivesEmpty {n : Nat} (Γ : Formula n) : Prop :=
-  ResProof Γ (∅ : Clause n)
-
-/-- 解析系统对 HardCNF_T 的**语义正确性**：
-    若解析系统从 HardResFormula n 推导出空子句，
-    则 HardCNF_T n 在所有赋值下都为 false。 -/
-axiom resSoundForHardCNF_T :
-  ∀ n : Nat,
-    ResDerivesEmpty (HardResFormula n) →
-    ∀ σ : Assignment (HardVarT n),
-      cnfEval σ (HardCNF_T n) = false
-
-/-- 假设：对于每个 n，HardResFormula n 在解析系统里都有一个 refutation。 -/
-axiom HardCNF_T_hasResolutionRefutation :
-  ∀ n : Nat, ResDerivesEmpty (HardResFormula n)
-
-/-- 由“解析 refutation + 解析 soundness”重新得到 HardCNF_T 的不可满足性。 -/
-theorem HardCNF_T_unsat_via_resolution (n : Nat) :
-  ∀ σ : Assignment (HardVarT n),
-    cnfEval σ (HardCNF_T n) = false := by
-  intro σ
-  -- 解析 refutation 存在：
-  have hRef : ResDerivesEmpty (HardResFormula n) :=
-    HardCNF_T_hasResolutionRefutation n
-  -- 利用 soundness 把 refutation 变成语义上的 UNSAT 结论
-  have hSound := resSoundForHardCNF_T n hRef
-  exact hSound σ
-
-end Resolution
 
 end StructuralAction
 
