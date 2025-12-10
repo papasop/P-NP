@@ -79,7 +79,7 @@ lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   simpa [satSet] using (cnfEval_true_iff_energy_zero (Φ := Φ) (σ := σ))
 
 ------------------------------------------------------------
--- 3. 一般 CNF（变长子句）和 3-SAT 转换 to3CNF
+-- 3. 一般 CNF（变长子句）和 3-SAT 转换 to3CNF（旧版 padding）
 ------------------------------------------------------------
 
 namespace PigeonholeFamily
@@ -109,9 +109,7 @@ def mkClause3 {n : Nat}
   | ⟨1, _⟩ => b
   | ⟨2, _⟩ => c
 
--- 把一个变长子句 Γ 拆成若干个 3-子句列表
--- 简单 padding：不引入新变量，因此只保证：
---   genClauseEval σ Γ = true  ⇒  cnfEval σ (to3CNFClause Γ) = true
+-- 把一个变长子句 Γ 拆成若干个 3-子句列表（旧版 padding，不引入新变量）
 def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
   | []        => []
   | [a]       => [mkClause3 a a a]
@@ -122,8 +120,6 @@ def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
 
 ------------------------------------------------------------
 -- 3a. 单个子句的 3-SAT 转换：soundness（非空子句）
---     若 Γ 非空，且 to3CNFClause Γ 在 σ 下为真，
---     则原始变长子句 Γ 在 σ 下也为真。
 ------------------------------------------------------------
 
 lemma to3CNFClause_sound_nonempty
@@ -242,15 +238,85 @@ lemma to3CNFClause_sound_nonempty
                   have := hOr4
                   simpa [hShape] using this
 
--- 3-SAT 转换：对每个一般子句做 to3CNFClause，然后拼接
+-- 旧版 3-SAT 转换：对每个一般子句做 to3CNFClause，然后拼接
 def to3CNF {n : Nat} (Φ : GenCNF n) : StructuralAction.CNF n :=
   Φ.foldr (fun Γ acc => to3CNFClause Γ ++ acc) []
 
--- 3-CNF 转换的“满足性规格”：占位未来的严格证明
+-- 3-CNF 转换的“满足性规格”：占位未来的严格证明（旧接口）
 axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
   ∀ σ : StructuralAction.Assignment n,
     genCNFEval σ Φ = true ↔
     StructuralAction.cnfEval σ (to3CNF Φ) = true
+
+------------------------------------------------------------
+-- 3b. Tseitin 转换骨架
+------------------------------------------------------------
+
+section Tseitin
+
+-- Tseitin 转换的结果：
+--   原公式有 n 个变量，Tseitin 之后有 n + auxVars 个变量，
+--   并给出一个 3-CNF（Clause 统一本在 CNF (n + auxVars) 上）。
+structure TseitinResult (n : Nat) where
+  auxVars : Nat
+  cnf     : StructuralAction.CNF (n + auxVars)
+
+-- 把 Fin n 提升到 Fin (n + aux)
+def liftFin {n aux : Nat} (i : Fin n) : Fin (n + aux) :=
+  ⟨i.1, by
+     have hi : i.1 < n := i.2
+     have hle : n ≤ n + aux := Nat.le_add_right _ _
+     exact Nat.lt_of_lt_of_le hi hle⟩
+
+-- 把 Literal n 提升到 Literal (n + aux)
+def liftLiteral {n aux : Nat}
+    (ℓ : StructuralAction.Literal n) :
+    StructuralAction.Literal (n + aux) :=
+  { var := liftFin (n := n) (aux := aux) ℓ.var
+  , neg := ℓ.neg }
+
+-- 把 GenClause n 提升为 GenClause (n + aux)
+def liftGenClause {n aux : Nat}
+    (Γ : GenClause n) : GenClause (n + aux) :=
+  Γ.map (fun ℓ => liftLiteral (n := n) (aux := aux) ℓ)
+
+/-
+  真正的 Tseitin 将会在这里引入 fresh 变量并构造 3-CNF。
+  目前骨架版本先不引入新变量，只是保持接口形状：
+  auxVars = 0，cnf = to3CNF Φ。
+-/
+
+-- 单个变长子句的 Tseitin 3-CNF 编码（目前未使用，先保留骨架）
+noncomputable
+def tseitinOfGenClause {n : Nat}
+    (Γ : GenClause n) : TseitinResult n :=
+  { auxVars := 0
+  , cnf     := to3CNFClause Γ }
+
+-- 整个 GenCNF 的 Tseitin 3-CNF 编码（骨架版：直接用 to3CNF）
+noncomputable
+def tseitinOfGenCNF {n : Nat}
+    (Φ : GenCNF n) : TseitinResult n :=
+  { auxVars := 0
+  , cnf     := to3CNF Φ }
+
+-- Tseitin 转换的“存在扩展赋值”方向：
+axiom tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
+  (∃ σ : StructuralAction.Assignment n,
+      genCNFEval σ Φ = true)
+  →
+  (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
+      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
+
+-- Tseitin 转换的“投影回原变量”方向：
+axiom genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
+  (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
+      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
+  →
+  (∃ σ : StructuralAction.Assignment n,
+      genCNFEval σ Φ = true)
+
+end Tseitin
 
 ------------------------------------------------------------
 -- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
@@ -349,7 +415,7 @@ noncomputable
 def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
--- PHPₙ 的 3-SAT 编码：HardCNF = to3CNF (PHP_fullGenCNF)
+-- PHPₙ 的 3-SAT 编码（旧接口）：HardCNF = to3CNF (PHP_fullGenCNF)
 noncomputable
 def PHPcnf (n : Nat) : StructuralAction.CNF (PHPVar n) :=
   to3CNF (PHP_fullGenCNF n)
@@ -447,9 +513,6 @@ end PHPUnsat
 ------------------------------------------------------------
 
 -- 一个“作用量族”：给每个规模 n（例如 PHPₙ）一个自然数 A n
--- 在直觉上，你可以把 A n 理解为：
---   HardActionDPLL n = 在 HardCNF n 上，所有合法 DPLL 轨迹 ψ 的
---                      最小结构作用量 A[ψ]
 def ActionSeq := Nat → Nat
 
 -- 指数下界：A n ≥ 2^n
@@ -489,25 +552,14 @@ theorem no_polyTime_on_family
 -- 8. 把 HardCNF（PHPₙ 的 3-SAT 编码）接到 DPLL 作用量族
 ------------------------------------------------------------
 
--- 概念上：HardActionDPLL n =
---   “在 HardCNF n 上，所有合法 DPLL 轨迹 ψ 的最小作用量 A[ψ]”
--- 这里先作为抽象序列，由后续复杂性理论给出性质。
 axiom HardActionDPLL : ActionSeq
 
--- 指数下界假设（复杂性方向的核心目标）：
---   在 PHP 困难族 HardCNF n 上，任何 DPLL 轨迹的作用量都 ≥ 2^n，
---   从而 HardActionDPLL n ≥ 2^n。
 axiom hardActionDPLL_expLower_2pow :
   ExpLower_2pow HardActionDPLL
 
--- 多项式上界假设（算法/工程上的“反面假设”）：
---   若我们假设 DPLL 在 HardCNF n 上是“多项式时间 + 每步结构密度多项式有界”，
---   通过类似 pathActionNat_polyUpper 的推理，可推出：
---     HardActionDPLL n ≤ n^2（这里用 n^2 当作统一的 P(n) 玩具上界）
 axiom hardActionDPLL_polyUpper_from_alg :
   PolyUpper_general HardActionDPLL
 
--- 最终矛盾：同一个 HardActionDPLL 既有指数下界又有 n^2 上界 ⇒ 不可能。
 theorem no_polyTime_DPLL_on_hardFamily : False :=
   no_polyTime_on_family
     HardActionDPLL
@@ -516,17 +568,14 @@ theorem no_polyTime_DPLL_on_hardFamily : False :=
 
 ------------------------------------------------------------
 -- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
---    （与 PHPₙ / HardCNF 完全独立，是一个纯组合学工具）
 ------------------------------------------------------------
 
--- 抽象算法模型：状态类型 + init + step + halting
 structure AlgorithmModel (n : Nat) where
   StateType : Type
   init     : CNF n → StateType
   step     : CNF n → StateType → StateType
   halting  : CNF n → StateType → Prop
 
--- 算法在公式 Φ 上的一条有限轨迹 ψ
 structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
   T      : Nat
   states : Fin (T+1) → A.StateType
@@ -541,17 +590,12 @@ structure ComputationPath {n : Nat} (A : AlgorithmModel n) (Φ : CNF n) where
 
 open Finset
 
--- 离散结构作用量：
---   pathActionNat A Φ density ψ = ∑_{t=0}^T density(s_t)
 def pathActionNat {n : Nat} (A : AlgorithmModel n) (Φ : CNF n)
     (density : A.StateType → Nat)
     (ψ : ComputationPath A Φ) : Nat :=
   (Finset.univ : Finset (Fin (ψ.T + 1))).sum
     (fun t => density (ψ.states t))
 
--- 核心下界引理：
---   若对路径上的每个状态 s_t 有 density(s_t) ≥ 1，
---   则作用量和 ≥ (T+1)。
 lemma pathActionNat_ge_time
     {n : Nat} (A : AlgorithmModel n)
     (density : A.StateType → Nat)
@@ -561,12 +605,10 @@ lemma pathActionNat_ge_time
       ψ.T + 1 ≤ pathActionNat A Φ density ψ := by
   intro Φ ψ
   classical
-  -- 每一步都有 density(s_t) ≥ 1
   have h_each : ∀ t : Fin (ψ.T + 1),
       1 ≤ density (ψ.states t) :=
     fun t => hPos Φ ψ t
 
-  -- ∑ 1 ≤ ∑ density
   have h_sum_le :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
       ≤
@@ -576,11 +618,9 @@ lemma pathActionNat_ge_time
     intro t ht
     exact h_each t
 
-  -- 常数和：∑_t 1 = card * 1 = (T+1)
   have h_sum_const :
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
         = ψ.T + 1 := by
-    -- 先用 sum_const_nat 得到 card * 1
     have h0 :
         (Finset.univ : Finset (Fin (ψ.T + 1))).sum (fun _ => (1 : Nat))
           =
@@ -589,23 +629,21 @@ lemma pathActionNat_ge_time
         (Finset.sum_const_nat
           (s := (Finset.univ : Finset (Fin (ψ.T + 1))))
           (b := (1 : Nat)))
-    -- 再用 card_univ = ψ.T + 1
     have h_card :
         (Finset.univ : Finset (Fin (ψ.T + 1))).card = ψ.T + 1 := by
       simpa [Finset.card_univ, Fintype.card_fin]
     simpa [h_card] using h0
 
-  -- 把下界写成 ψ.T + 1 ≤ ∑ density
   have h_final :
       ψ.T + 1 ≤
       (Finset.univ : Finset (Fin (ψ.T + 1))).sum
         (fun t => density (ψ.states t)) := by
     simpa [h_sum_const] using h_sum_le
 
-  -- 最后展开 pathActionNat
   simpa [pathActionNat] using h_final
 
 end StructuralAction
+
 
 
 
