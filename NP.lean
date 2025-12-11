@@ -76,7 +76,7 @@ lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   simpa [satSet] using (cnfEval_true_iff_energy_zero (Φ := Φ) (σ := σ))
 
 ------------------------------------------------------------
--- 3. 一般 CNF（变长子句）和 3-SAT 转换 to3CNF（旧版 padding）
+-- 3. 一般 CNF（变长子句）和评估
 ------------------------------------------------------------
 
 namespace PigeonholeFamily
@@ -97,6 +97,10 @@ def genCNFEval {n : Nat} (σ : StructuralAction.Assignment n)
     (Φ : GenCNF n) : Bool :=
   Φ.foldr (fun C acc => genClauseEval σ C && acc) true
 
+------------------------------------------------------------
+-- 3'. 旧版 padding to3CNF（保留做演示，但不再有 equisat 公理）
+------------------------------------------------------------
+
 -- 把 3 个字面打包成一个 3-子句
 def mkClause3 {n : Nat}
     (a b c : StructuralAction.Literal n)
@@ -106,7 +110,7 @@ def mkClause3 {n : Nat}
   | ⟨1, _⟩ => b
   | ⟨2, _⟩ => c
 
--- 把一个变长子句 Γ 拆成若干个 3-子句列表（旧版 padding，不引入新变量）
+-- 旧版：只对长度 ≤ 3 的子句是语义等价，长度 ≥ 4 的只是演示用（不再用于主线）
 def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
   | []        => []
   | [a]       => [mkClause3 a a a]
@@ -115,191 +119,47 @@ def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
   | a :: b :: c :: rest =>
       mkClause3 a b c :: to3CNFClause rest
 
-------------------------------------------------------------
--- 3a. 单个子句的 3-SAT 转换：soundness（非空子句）
-------------------------------------------------------------
-
-lemma to3CNFClause_sound_nonempty
-    {n : Nat} (σ : StructuralAction.Assignment n) :
-  ∀ Γ : GenClause n,
-    Γ ≠ [] →
-    StructuralAction.cnfEval σ (to3CNFClause Γ) = true →
-    genClauseEval σ Γ = true := by
-  classical
-  intro Γ hne h
-  cases Γ with
-  | nil =>
-      cases hne rfl
-  | cons a tail =>
-      cases tail with
-      | nil =>
-          -- Γ = [a]
-          have hTriple :
-              StructuralAction.clauseEval σ (mkClause3 a a a) = true := by
-            simpa [to3CNFClause, StructuralAction.cnfEval] using h
-          have hLit :
-              StructuralAction.literalEval σ a = true := by
-            simpa [StructuralAction.clauseEval, mkClause3] using hTriple
-          simpa [genClauseEval, hLit]
-      | cons b tail2 =>
-          cases tail2 with
-          | nil =>
-              -- Γ = [a, b]
-              have hTriple :
-                  StructuralAction.clauseEval σ (mkClause3 a a b) = true := by
-                simpa [to3CNFClause, StructuralAction.cnfEval] using h
-              have hOr :
-                  (StructuralAction.literalEval σ a
-                    || StructuralAction.literalEval σ b) = true := by
-                simpa [StructuralAction.clauseEval, mkClause3,
-                       Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                  using hTriple
-              simpa [genClauseEval,
-                     Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                using hOr
-          | cons c tail3 =>
-              cases tail3 with
-              | nil =>
-                  -- Γ = [a, b, c]
-                  have hTriple :
-                      StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
-                    simpa [to3CNFClause, StructuralAction.cnfEval] using h
-                  have hOr :
-                      (StructuralAction.literalEval σ a
-                        || StructuralAction.literalEval σ b
-                        || StructuralAction.literalEval σ c) = true := by
-                    simpa [StructuralAction.clauseEval, mkClause3] using hTriple
-                  simpa [genClauseEval,
-                         Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                    using hOr
-              | cons d rest =>
-                  -- Γ = a :: b :: c :: d :: rest  （长度 ≥ 4）
-                  have hTriple :
-                      StructuralAction.clauseEval σ (mkClause3 a b c) = true := by
-                    have h' := h
-                    simp [to3CNFClause, StructuralAction.cnfEval] at h'
-                    exact h'.1
-                  have hOr3 :
-                      (StructuralAction.literalEval σ a
-                        || StructuralAction.literalEval σ b
-                        || StructuralAction.literalEval σ c) = true := by
-                    simpa [StructuralAction.clauseEval, mkClause3,
-                           Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                      using hTriple
-                  have hOr4 :
-                      (StructuralAction.literalEval σ a
-                        || StructuralAction.literalEval σ b
-                        || StructuralAction.literalEval σ c
-                        || genClauseEval σ (d :: rest)) = true := by
-                    have := congrArg
-                      (fun b =>
-                        b || genClauseEval σ (d :: rest)) hOr3
-                    simpa [Bool.true_or, Bool.or_assoc] using this
-                  have hShape :
-                      genClauseEval σ (a :: b :: c :: d :: rest)
-                        =
-                      (StructuralAction.literalEval σ a
-                        || StructuralAction.literalEval σ b
-                        || StructuralAction.literalEval σ c
-                        || genClauseEval σ (d :: rest)) := by
-                    simp [genClauseEval,
-                          Bool.or_assoc, Bool.or_left_comm, Bool.or_comm]
-                  have := hOr4
-                  simpa [hShape] using this
-
--- 旧版 3-SAT 转换：对每个一般子句做 to3CNFClause，然后拼接
 def to3CNF {n : Nat} (Φ : GenCNF n) : StructuralAction.CNF n :=
   Φ.foldr (fun Γ acc => to3CNFClause Γ ++ acc) []
 
--- 3-CNF 转换的“满足性规格”：占位未来的严格证明（旧接口）
-axiom to3CNF_equisat {n : Nat} (Φ : GenCNF n) :
-  ∀ σ : StructuralAction.Assignment n,
-    genCNFEval σ Φ = true ↔
-    StructuralAction.cnfEval σ (to3CNF Φ) = true
-
 ------------------------------------------------------------
--- 3b. Tseitin 转换骨架 + Equisatisfiability 证明（骨架版）
+-- [TSEITIN NEW]  真正用于 3-CNF 的 Tseitin 转换接口（带公理规格）
 ------------------------------------------------------------
 
-section Tseitin
-
--- Tseitin 转换的结果：
---   原公式有 n 个变量，Tseitin 之后有 n + auxVars 个变量，
---   并给出一个 3-CNF。
+/-- Tseitin 转换的结果：
+    * 原公式有 n 个变量；
+    * Tseitin 转换后有 n + auxVars 个变量；
+    * 输出一个真正的 3-CNF：StructuralAction.CNF (n + auxVars)。 -/
 structure TseitinResult (n : Nat) where
   auxVars : Nat
   cnf     : StructuralAction.CNF (n + auxVars)
 
--- 把 Fin n 提升到 Fin (n + aux)
-def liftFin {n aux : Nat} (i : Fin n) : Fin (n + aux) :=
-  ⟨i.1, by
-     have hi : i.1 < n := i.2
-     have hle : n ≤ n + aux := Nat.le_add_right _ _
-     exact Nat.lt_of_lt_of_le hi hle⟩
+/-- 真正的 Tseitin 转换：
+    这里先只给出“接口”，具体构造+证明是后续大工程，
+    所以目前仍用公理占位。 -/
+axiom tseitinOfGenCNF {n : Nat} (Φ : GenCNF n) : TseitinResult n
 
--- 把 Literal n 提升到 Literal (n + aux)
-def liftLiteral {n aux : Nat}
-    (ℓ : StructuralAction.Literal n) :
-    StructuralAction.Literal (n + aux) :=
-  { var := liftFin (n := n) (aux := aux) ℓ.var
-  , neg := ℓ.neg }
-
--- 把 GenClause n 提升为 GenClause (n + aux)
-def liftGenClause {n aux : Nat}
-    (Γ : GenClause n) : GenClause (n + aux) :=
-  Γ.map (fun ℓ => liftLiteral (n := n) (aux := aux) ℓ)
-
-/- 真正的 Tseitin 会引入 fresh 变量。这里仍然用骨架占位： -/
-noncomputable
-def tseitinOfGenClause {n : Nat}
-    (Γ : GenClause n) : TseitinResult n :=
-  { auxVars := 0
-  , cnf     := to3CNFClause Γ }
-
-noncomputable
-def tseitinOfGenCNF {n : Nat}
-    (Φ : GenCNF n) : TseitinResult n :=
-  { auxVars := 0
-  , cnf     := to3CNF Φ }
-
-/-- Tseitin 方向 1：GenCNF SAT ⇒ Tseitin CNF SAT -/
-lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
+/-- Tseitin：GenCNF SAT ⇒ Tseitin CNF SAT（语义方向 1）。
+    这是真正需要你未来补全的“等价性证明”之一。 -/
+axiom tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
   (∃ σ : StructuralAction.Assignment n,
       genCNFEval σ Φ = true)
   →
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
-      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true) := by
-  intro h
-  classical
-  rcases h with ⟨σ, hσ⟩
-  refine ⟨σ, ?_⟩
-  have hCnf : StructuralAction.cnfEval σ (to3CNF Φ) = true :=
-    (to3CNF_equisat (Φ := Φ) (σ := σ)).mp hσ
-  simpa [tseitinOfGenCNF] using hCnf
+      StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
 
-/-- Tseitin 方向 2：Tseitin CNF SAT ⇒ GenCNF SAT -/
-lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
+/-- Tseitin：Tseitin CNF SAT ⇒ GenCNF SAT（语义方向 2）。 -/
+axiom genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
       StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
   →
   (∃ σ : StructuralAction.Assignment n,
-      genCNFEval σ Φ = true) := by
-  intro h
-  classical
-  rcases h with ⟨σ', hσ'⟩
-  refine ⟨σ', ?_⟩
-  have hGen : genCNFEval σ' Φ = true :=
-    (to3CNF_equisat (Φ := Φ) (σ := σ')).mpr
-      (by simpa [tseitinOfGenCNF] using hσ')
-  exact hGen
-
-end Tseitin
+      genCNFEval σ Φ = true)
 
 end PigeonholeFamily
 
 ------------------------------------------------------------
--- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
---    这里采用 PHPVar n = (n+1)*n + 1，上界 + dummy 变量
+-- 4. [PHP FIX] 鸽笼原理 PHPₙ 的变量编码 + CNF 族
 ------------------------------------------------------------
 
 open PigeonholeFamily
@@ -310,51 +170,51 @@ abbrev Pigeon (n : Nat) := Fin (n + 1)
 -- 第 n 个洞：共有 n 个洞
 abbrev Hole (n : Nat) := Fin n
 
--- PHPₙ 的布尔变量个数上界：(n+1)*n + 1
--- 解释：最后一个变量索引永远不会被使用，可以当作 dummy 变量。
+/-- PHPₙ 的布尔变量个数：精确为 (n+1)*n 个。 -/
 abbrev PHPVar (n : Nat) : Nat :=
-  Nat.succ ((n + 1) * n)
+  (n + 1) * n
 
--- PHPₙ 的变量索引类型
+/-- PHPₙ 的变量索引类型。 -/
 abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
 
--- 把 (p, h) 映射到变量索引：index(p, h) = p * n + h
+/-- 把 (p, h) 映射到变量索引：index(p, h) = p * n + h。
+
+    证明思路：
+    * 因为 h < n，所以 p*n + h < p*n + n = (p+1)*n；
+    * 又因为 p ≤ n，所以 (p+1)*n ≤ (n+1)*n = PHPVar n；
+    * 合起来得到 p*n + h < PHPVar n。 -/
 noncomputable
 def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
   ⟨p.1 * n + h.1, by
-    have hp_le : p.1 ≤ n := Nat.le_of_lt_succ p.2
+    have hp_lt : p.1 < n + 1 := p.2
+    have hp_le : p.1 ≤ n := Nat.le_of_lt_succ hp_lt
     have hh_lt : h.1 < n := h.2
-    have hh_le : h.1 ≤ n - 1 := Nat.le_pred_of_lt hh_lt
 
-    -- 1. 先把 h.1 换成 n - 1 的上界
-    have h1a : p.1 * n + h.1 ≤ p.1 * n + (n - 1) :=
-      Nat.add_le_add_left hh_le _
+    -- 1. p * n + h < (p+1) * n
+    have h_lt_step : p.1 * n + h.1 < p.1 * n + n := by
+      -- h.1 < n ⇒ p*n + h.1 < p*n + n
+      exact Nat.add_lt_add_left hh_lt (p.1 * n)
 
-    -- 2. 再把 p.1 换成 n 的上界
-    have hp_mul : p.1 * n ≤ n * n :=
-      Nat.mul_le_mul_right _ hp_le
-    have h1b : p.1 * n + (n - 1) ≤ n * n + (n - 1) :=
-      Nat.add_le_add_right hp_mul _
+    have h_lt_p1 : p.1 * n + n = (p.1 + 1) * n := by
+      -- p*n + n = (p+1)*n
+      ring
 
-    -- 3. 把 (n - 1) 换成 n 的上界
-    have h1c : n * n + (n - 1) ≤ n * n + n := by
-      have : n - 1 ≤ n := Nat.sub_le _ _
-      exact Nat.add_le_add_left this _
+    have h_lt_p1n : p.1 * n + h.1 < (p.1 + 1) * n := by
+      simpa [h_lt_p1] using h_lt_step
 
-    -- 4. 合并得到 p.1 * n + h.1 ≤ n * n + n
-    have h_total : p.1 * n + h.1 ≤ n * n + n :=
-      le_trans (le_trans h1a h1b) h1c
+    -- 2. (p+1) ≤ (n+1) ⇒ (p+1)*n ≤ (n+1)*n
+    have hp1_le : p.1 + 1 ≤ n + 1 :=
+      Nat.succ_le_succ hp_le
+    have hp1n_le : (p.1 + 1) * n ≤ (n + 1) * n :=
+      Nat.mul_le_mul_right _ hp1_le
 
-    -- 5. 把 n * n + n 改写成 (n + 1) * n
-    have h_le : p.1 * n + h.1 ≤ (n + 1) * n := by
-      simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm,
-             Nat.add_assoc, Nat.mul_comm] using h_total
+    -- 3. 链一下：p*n + h < (p+1)*n ≤ (n+1)*n
+    have h_final :
+        p.1 * n + h.1 < (n + 1) * n :=
+      lt_of_lt_of_le h_lt_p1n hp1n_le
 
-    -- 6. 利用 succ 得到严格不等式：
-    --    p.1 * n + h.1 < ((n + 1) * n) + 1 = PHPVar n
-    have : p.1 * n + h.1 < ((n + 1) * n) + 1 :=
-      Nat.lt_succ_of_le h_le
-    simpa [PHPVar] using this ⟩
+    -- 4. 最后改写成 PHPVar n
+    simpa [PHPVar] using h_final ⟩
 
 -- 把所有鸽子列成一个 List
 noncomputable
@@ -409,18 +269,6 @@ noncomputable
 def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
--- PHPₙ 的 3-SAT 编码（旧接口）：HardCNF = to3CNF (PHP_fullGenCNF)
-noncomputable
-def PHPcnf (n : Nat) : StructuralAction.CNF (PHPVar n) :=
-  to3CNF (PHP_fullGenCNF n)
-
--- PHP_fullGenCNF 的语义桥接：SAT ↔ 存在单射 f : Pigeon → Hole
-axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
-  (∃ σ : StructuralAction.Assignment (PHPVar n),
-     genCNFEval σ (PHP_fullGenCNF n) = true)
-  ↔
-  (∃ f : Pigeon n → Hole n, Function.Injective f)
-
 ------------------------------------------------------------
 -- 5. 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
 ------------------------------------------------------------
@@ -444,12 +292,26 @@ lemma no_injection_Pigeon_to_Hole (n : Nat) :
 end PigeonholeMath
 
 ------------------------------------------------------------
--- 6. 从 PHP_fullGenCNF 到 3-CNF PHPcnf 的 UNSAT 逻辑链
+-- 6. 从 PHP_fullGenCNF 到 Tseitin 3-CNF 的 UNSAT 逻辑链
 ------------------------------------------------------------
 
-section PHPUnsat
+section PHPUnsatTseitin
 
--- PHP_fullGenCNF 不可满足
+open PigeonholeFamily
+
+/-- PHP_fullGenCNF 的语义桥接：
+    SAT ↔ 存在单射 f : Pigeon n → Hole n。
+
+    ⚠️ 注意：这仍然是一个“全局语义公理”，
+    后续若要彻底无公理化，需要真正构造
+    SAT 赋值 ↔ 注入函数 的往返映射。 -/
+axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
+  (∃ σ : StructuralAction.Assignment (PHPVar n),
+     genCNFEval σ (PHP_fullGenCNF n) = true)
+  ↔
+  (∃ f : Pigeon n → Hole n, Function.Injective f)
+
+/-- PHP_fullGenCNF 不可满足。 -/
 lemma PHP_fullGenCNF_unsat (n : Nat) :
   ¬ ∃ σ : Assignment (PHPVar n),
       genCNFEval σ (PHP_fullGenCNF n) = true := by
@@ -458,48 +320,6 @@ lemma PHP_fullGenCNF_unsat (n : Nat) :
       ∃ f : Pigeon n → Hole n, Function.Injective f :=
     (PHP_fullGenCNF_sat_iff_injection n).1 hSat
   exact no_injection_Pigeon_to_Hole n hInj
-
--- HardCNF n = PHPcnf n：3-SAT 形式的鸽笼公式
-noncomputable
-def HardCNF (n : Nat) : CNF (PHPVar n) :=
-  PHPcnf n
-
--- 对任意赋值 σ，HardCNF n 在 σ 下为 false（不可满足）
-lemma HardCNF_unsat (n : Nat) :
-  ∀ σ : Assignment (PHPVar n),
-    cnfEval σ (HardCNF n) = false := by
-  intro σ
-  classical
-  have hUnsatGen := PHP_fullGenCNF_unsat n
-  have hNotSatCnf : ¬ cnfEval σ (HardCNF n) = true := by
-    intro hSat
-    have hEquiv :=
-      to3CNF_equisat
-        (Φ := PHP_fullGenCNF n) (σ := σ)
-    have hSat3 :
-        cnfEval σ (to3CNF (PHP_fullGenCNF n)) = true := by
-      simpa [HardCNF, PHPcnf] using hSat
-    have hSatGen :
-        genCNFEval σ (PHP_fullGenCNF n) = true :=
-      hEquiv.mpr hSat3
-    exact hUnsatGen ⟨σ, hSatGen⟩
-  have hOr :
-      cnfEval σ (HardCNF n) = true ∨
-      cnfEval σ (HardCNF n) = false := by
-    cases h' : cnfEval σ (HardCNF n) <;> simp [h']
-  cases hOr with
-  | inl hTrue =>
-      exact False.elim (hNotSatCnf hTrue)
-  | inr hFalse =>
-      exact hFalse
-
-end PHPUnsat
-
-------------------------------------------------------------
--- 6'. 使用 Tseitin 版本的 HardCNF_T：PHP_fullGenCNF 经 Tseitin 的 3-CNF
-------------------------------------------------------------
-
-section PHPUnsatTseitin
 
 /-- Tseitin 之后 PHPₙ 的变量总数：
     原始 PHPVar n 个变量 + Tseitin 引入的辅助变量个数。 -/
@@ -521,6 +341,7 @@ lemma HardCNF_T_unsat (n : Nat) :
   have hUnsatGen := PHP_fullGenCNF_unsat n
   have hNotSat : ¬ cnfEval σ' (HardCNF_T n) = true := by
     intro hSat
+    -- 利用 Tseitin SAT ⇒ GenCNF SAT
     have hSatExist :
         ∃ σ'' : Assignment (PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars),
           cnfEval σ'' (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf = true := by
@@ -900,9 +721,7 @@ structure AnalyzeResult (n : Nat) where
   learnt   : RClause n
   resSteps : Nat
 
-/-- 冲突分析核心递归（简化版 UIP/backjump）：
-    通过 trail 的 antecedent 链条，反复对冲突子句做 resolveOneStep，
-    fuel 只是一个保证终止的上界。 -/
+/-- 冲突分析核心递归（简化版 UIP/backjump）： -/
 def analyzeConflictCore {n : Nat}
     (τ : Trail n) (C₀ : RClause n) (lvl fuel : Nat) :
     AnalyzeResult n :=
@@ -973,9 +792,7 @@ def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
 /-- Backtrack / Backjump：
     * 利用刚刚学习到的首个 learnt 子句 C_learnt，
       计算其中文字在 trail 上的最大决策层级 Lmax；
-    * 回跳到 newLevel = Lmax（简化版 backjump）；
-    * 丢弃 trail 中 level > newLevel 的条目；
-    * 不改变 learnt / pending / resSteps。 -/
+    * 回跳到 newLevel = Lmax（简化版 backjump）； -/
 def backtrack {n : Nat} (s : State n) : State n :=
   match s.learnt with
   | [] => s
@@ -988,7 +805,7 @@ def backtrack {n : Nat} (s : State n) : State n :=
         decisionLevel := newLvl
         learnt        := s.learnt
         pending       := s.pending
-        conflict      := s.conflict   -- 通常已在 conflictAnalyze 中清空
+        conflict      := s.conflict
         resSteps      := s.resSteps }
 
 /-- Decide：在没有 unit / 冲突时，选择一个未赋值的变量做决策。 -/
@@ -1058,14 +875,12 @@ lemma density_pos (n : Nat)
 lemma dpll_pathActionNat_ge_steps (n : Nat)
     (Φ : CNF n) (ψ : ComputationPath (Model n) Φ) :
     ψ.T + 1 ≤ pathActionNat (Model n) Φ (density n) ψ := by
-  -- 构造满足 pathActionNat_ge_time 所需的 hPos
   have hPos :
       ∀ (Φ' : CNF n) (ψ' : ComputationPath (Model n) Φ')
         (t : Fin (ψ'.T + 1)),
         1 ≤ density n (ψ'.states t) := by
     intro Φ' ψ' t
     simpa using (density_pos n Φ' ψ' t)
-  -- 应用通用引理
   have h :=
     StructuralAction.pathActionNat_ge_time
       (A := Model n)
@@ -1088,8 +903,7 @@ structure Simulation {n : Nat} (Φ : CNF n)
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
 
-/-- 存在模拟：
-    ★ 这里仍然作为公理存在，是整个框架的唯一“重”假设。 -/
+/-- 存在模拟（未来目标：把它从 axiom 提升为 theorem）。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ) (π := π)
@@ -1169,10 +983,8 @@ theorem no_polyTime_DPLL_on_HardFamily
     (hUpper : PolyUpper_general (hardActionFromFamily H)) :
     False :=
   by
-    -- 用上面的提升引理，把 Resolution 的指数下界搬到 DPLL 侧
     have hLowerDPLL : ExpLower_2pow (hardActionFromFamily H) :=
       expLower_lift_from_res_to_dpll H hRes
-    -- 再用 toy_hardFamily_contradiction 得到矛盾
     exact
       no_polyTime_on_family
         (A      := hardActionFromFamily H)
@@ -1182,8 +994,6 @@ theorem no_polyTime_DPLL_on_HardFamily
 end HardFamilySchema
 
 end StructuralAction
-
-
 
 
 
