@@ -6,9 +6,9 @@ open scoped BigOperators
   整体结构：
   * namespace StructuralAction
     - 1. 3-SAT 基础语法
-    - 2. 一般 CNF（GenCNF）与 Tseitin 结果
+    - 2. 一般 CNF（GenCNF）+ 语义引理
     - 3. PHP 具体编码 + SAT ⇒ 注入 + UNSAT
-    - 4. Tseitin 版困难 CNF：HardVarT / HardCNF_T / HardCNF_T_unsat
+    - 4. 参数化 Tseitin 编码 + HardCNF_T_unsat
 -/
 
 namespace StructuralAction
@@ -50,12 +50,13 @@ def cnfEval {n : Nat} (σ : Assignment n) : CNF n → Bool
   | C :: Φ  => clauseEval σ C && cnfEval σ Φ
 
 ------------------------------------------------------------
--- 2. 一般 CNF（GenCNF）与 Tseitin 结果结构体
+-- 2. 一般 CNF（GenCNF）+ 语义引理
 ------------------------------------------------------------
 
 namespace PigeonholeFamily
 
 open StructuralAction
+open List
 
 -- 一般子句：任意长度的字面列表
 abbrev GenClause (n : Nat) := List (Literal n)
@@ -63,59 +64,143 @@ abbrev GenClause (n : Nat) := List (Literal n)
 -- 一般 CNF：一般子句列表
 abbrev GenCNF (n : Nat) := List (GenClause n)
 
--- 评价一般子句：折叠“或”
-def genClauseEval {n : Nat} (σ : Assignment n) (Γ : GenClause n) : Bool :=
-  Γ.foldr (fun ℓ acc => literalEval σ ℓ || acc) false
+/-- 评价一般子句：递归折叠“或” -/
+def genClauseEval {n : Nat} (σ : Assignment n) : GenClause n → Bool
+  | []      => false
+  | ℓ :: Γ  => literalEval σ ℓ || genClauseEval σ Γ
 
--- 评价一般 CNF：所有子句的合取
-def genCNFEval {n : Nat} (σ : Assignment n) (Φ : GenCNF n) : Bool :=
-  Φ.foldr (fun C acc => genClauseEval σ C && acc) true
+/-- 评价一般 CNF：递归折叠“且” -/
+def genCNFEval {n : Nat} (σ : Assignment n) : GenCNF n → Bool
+  | []      => true
+  | C :: Φ  => genClauseEval σ C && genCNFEval σ Φ
 
-/-- Tseitin 转换的结果：
-    * 原公式有 n 个变量；
-    * Tseitin 之后有 n + auxVars 个变量（扩展变量空间）；
-    * 结果是一个 3-CNF（我们这里直接用 CNF 表示）。 -/
-structure TseitinResult (n : Nat) where
+/-- 子句求值为 true 当且仅当存在某个字面为 true。 -/
+lemma genClauseEval_true_iff_exists_literal {n}
+    (σ : Assignment n) :
+  ∀ Γ : GenClause n,
+    genClauseEval σ Γ = true ↔
+    ∃ ℓ ∈ Γ, literalEval σ ℓ = true
+  | [] => by
+      simp [genClauseEval]
+  | ℓ :: Γ => by
+      have ih := genClauseEval_true_iff_exists_literal σ Γ
+      constructor
+      · intro h
+        have : literalEval σ ℓ = true ∨ genClauseEval σ Γ = true := by
+          -- Bool.or_eq_true : a || b = true ↔ a = true ∨ b = true
+          simpa [genClauseEval, Bool.or_eq_true] using h
+        cases this with
+        | inl hℓ =>
+            exact ⟨ℓ, by simp, hℓ⟩
+        | inr hΓ =>
+            rcases ih.mp hΓ with ⟨ℓ', hmem', hℓ'⟩
+            exact ⟨ℓ', by simp [List.mem_cons, hmem'], hℓ'⟩
+      · intro h
+        rcases h with ⟨ℓ', hmem', hℓ'⟩
+        -- 从 ℓ' ∈ ℓ :: Γ 得到 ℓ' = ℓ 或 ℓ' ∈ Γ
+        have hmem'' : ℓ' = ℓ ∨ ℓ' ∈ Γ := by
+          simpa [List.mem_cons] using hmem'
+        have : literalEval σ ℓ = true ∨ genClauseEval σ Γ = true := by
+          cases hmem'' with
+          | inl hEq =>
+              subst hEq
+              exact Or.inl hℓ'
+          | inr hIn =>
+              have hΓ : genClauseEval σ Γ = true :=
+                (ih.mpr ⟨ℓ', hIn, hℓ'⟩)
+              exact Or.inr hΓ
+        simpa [genClauseEval, Bool.or_eq_true] using this
+
+/-- CNF 求值为 true 当且仅当所有子句都为 true。 -/
+lemma genCNFEval_true_iff_all_clause_true {n}
+    (σ : Assignment n) :
+  ∀ Φ : GenCNF n,
+    genCNFEval σ Φ = true ↔
+    (∀ C ∈ Φ, genClauseEval σ C = true)
+  | [] => by
+      simp [genCNFEval]
+  | C :: Φ => by
+      have ih := genCNFEval_true_iff_all_clause_true σ Φ
+      constructor
+      · intro h
+        have h' : genClauseEval σ C = true ∧ genCNFEval σ Φ = true := by
+          simpa [genCNFEval, Bool.and_eq_true] using h
+        rcases h' with ⟨hC, hΦ⟩
+        intro C' hmem
+        simp [List.mem_cons] at hmem
+        rcases hmem with hEq | hIn
+        · subst hEq
+          exact hC
+        · have hAllΦ : ∀ C'' ∈ Φ, genClauseEval σ C'' = true :=
+            (ih.mp hΦ)
+          exact hAllΦ C' hIn
+      · intro hAll
+        have hC : genClauseEval σ C = true := hAll C (by simp)
+        have hAllΦ : ∀ C' ∈ Φ, genClauseEval σ C' = true := by
+          intro C' hIn
+          exact hAll C' (by simp [List.mem_cons, hIn])
+        have hΦ : genCNFEval σ Φ = true := (ih.mpr hAllΦ)
+        simpa [genCNFEval, Bool.and_eq_true, hC, hΦ]
+
+/-- 拼接 Φ₁ ++ Φ₂ 的真值等价于“Φ₁ 为真且 Φ₂ 为真”。 -/
+lemma genCNFEval_true_append_iff {n}
+    (σ : Assignment n) (Φ₁ Φ₂ : GenCNF n) :
+  genCNFEval σ (Φ₁ ++ Φ₂) = true ↔
+  (genCNFEval σ Φ₁ = true ∧ genCNFEval σ Φ₂ = true) := by
+  have hAll := genCNFEval_true_iff_all_clause_true (σ := σ)
+  constructor
+  · intro h
+    have hAllClauses :=
+      (hAll (Φ := Φ₁ ++ Φ₂)).mp h
+    have hΦ₁ : genCNFEval σ Φ₁ = true := by
+      apply (hAll (Φ := Φ₁)).mpr
+      intro C hCmem
+      exact hAllClauses C (by
+        have : C ∈ Φ₁ ∨ C ∈ Φ₂ := Or.inl hCmem
+        simpa [List.mem_append] using this)
+    have hΦ₂ : genCNFEval σ Φ₂ = true := by
+      apply (hAll (Φ := Φ₂)).mpr
+      intro C hCmem
+      exact hAllClauses C (by
+        have : C ∈ Φ₁ ∨ C ∈ Φ₂ := Or.inr hCmem
+        simpa [List.mem_append] using this)
+    exact ⟨hΦ₁, hΦ₂⟩
+  · intro h
+    rcases h with ⟨hΦ₁, hΦ₂⟩
+    have hAllΦ₁ :
+        ∀ C ∈ Φ₁, genClauseEval σ C = true :=
+      (hAll (Φ := Φ₁)).mp hΦ₁
+    have hAllΦ₂ :
+        ∀ C ∈ Φ₂, genClauseEval σ C = true :=
+      (hAll (Φ := Φ₂)).mp hΦ₂
+    apply (hAll (Φ := Φ₁ ++ Φ₂)).mpr
+    intro C hCmem
+    have : C ∈ Φ₁ ∨ C ∈ Φ₂ := by
+      simpa [List.mem_append] using hCmem
+    cases this with
+    | inl hIn1 => exact hAllΦ₁ C hIn1
+    | inr hIn2 => exact hAllΦ₂ C hIn2
+
+/-- 原来的“拼接 ⇒ 两边都为真”公理，现在是证出来的 lemma。 -/
+lemma genCNFEval_true_of_append
+    {n : Nat} (σ : Assignment n)
+    (Φ₁ Φ₂ : GenCNF n) :
+    genCNFEval σ (Φ₁ ++ Φ₂) = true →
+    genCNFEval σ Φ₁ = true ∧ genCNFEval σ Φ₂ = true := by
+  intro h
+  exact (genCNFEval_true_append_iff (σ := σ) Φ₁ Φ₂).mp h
+
+------------------------------------------------------------
+-- 2.b 参数化的 Tseitin 编码接口（无 axiom）
+------------------------------------------------------------
+
+/-- 对给定 GenCNF Φ 的某个 3-CNF 编码及其 equisat 证明。 -/
+structure TseitinEncoding (n : Nat) (Φ : GenCNF n) where
   auxVars : Nat
   cnf     : CNF (n + auxVars)
-
-/-- 这里给一个“占位实现”：真正的 Tseitin 构造可以日后填充；
-    目前我们只关心类型对齐，不依赖具体构造。 -/
-noncomputable
-def tseitinOfGenCNF {n : Nat} (Φ : GenCNF n) : TseitinResult n :=
-  { auxVars := 0
-    cnf     := [] }   -- 任意占位，语义由后面公理给出
-
-/-- 真正的 Tseitin 等价性公理：
-    GenCNF 与其 Tseitin 3-CNF 在“存在满足赋值”这一层面上等价。 -/
-axiom tseitin_equisat {n : Nat} (Φ : GenCNF n) :
-  (∃ σ  : Assignment n,
-     genCNFEval σ Φ = true)
-    ↔
-  (∃ σ' : Assignment (n + (tseitinOfGenCNF Φ).auxVars),
-     cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
-
-------------------------------------------------------------
--- 2'. Tseitin 等价性的两个方向引理（方便使用）
-------------------------------------------------------------
-
-/-- 方向 1：GenCNF SAT ⇒ Tseitin 3-CNF SAT。 -/
-lemma tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
-  (∃ σ : Assignment n, genCNFEval σ Φ = true) →
-  (∃ σ' : Assignment (n + (tseitinOfGenCNF Φ).auxVars),
-      cnfEval σ' (tseitinOfGenCNF Φ).cnf = true) := by
-  intro h
-  have hEquiv := tseitin_equisat (Φ := Φ)
-  exact hEquiv.mp h
-
-/-- 方向 2：Tseitin 3-CNF SAT ⇒ GenCNF SAT。 -/
-lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
-  (∃ σ' : Assignment (n + (tseitinOfGenCNF Φ).auxVars),
-      cnfEval σ' (tseitinOfGenCNF Φ).cnf = true) →
-  (∃ σ : Assignment n, genCNFEval σ Φ = true) := by
-  intro h
-  have hEquiv := tseitin_equisat (Φ := Φ)
-  exact hEquiv.mpr h
+  equisat :
+    (∃ σ : Assignment n, genCNFEval σ Φ = true) ↔
+    (∃ σ' : Assignment (n + auxVars), cnfEval σ' cnf = true)
 
 ------------------------------------------------------------
 -- 3. PHP 具体编码 + SAT ⇒ 注入 + UNSAT
@@ -140,7 +225,6 @@ def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
   ⟨p.1 * n + h.1, by
     -- 目标：p.1 * n + h.1 < (n+1)*n + 1 = PHPVar n
     have hp : p.1 ≤ n := Nat.le_of_lt_succ p.2
-    -- h.2 : h.1 < n
     have h1 : p.1 * n + h.1 < p.1 * n + n :=
       Nat.add_lt_add_left h.2 _
     have hp' : p.1 * n ≤ n * n :=
@@ -215,28 +299,57 @@ def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
 ------------------------------------------------------------
--- 3.2 ALO / AMO / append 的语义小公理
+-- 3.2 ALO / AMO 的语义：ALO 已经证明，AMO 暂时保留公理
 ------------------------------------------------------------
 
-/-- 若 genCNFEval σ (Φ₁ ++ Φ₂) = true，则两边都为 true。 -/
-axiom genCNFEval_true_of_append
-    {n : Nat} (σ : Assignment n)
-    (Φ₁ Φ₂ : GenCNF n) :
-    genCNFEval σ (Φ₁ ++ Φ₂) = true →
-    genCNFEval σ Φ₁ = true ∧ genCNFEval σ Φ₂ = true
-
-/-- ALO 部分语义公理：
-    若 genCNFEval σ (PHP_atLeastOne n) = true，
-    则每只鸽子 p 都有一个洞 h 使得 σ(x_{p,h}) = true。 -/
-axiom PHP_atLeastOne_sound
+/-- ALO 语义：ALO 部分为真 ⇒ 每只鸽子至少一个洞为 true。 -/
+lemma PHP_atLeastOne_sound
     (n : Nat) (σ : Assignment (PHPVar n))
     (hσ : genCNFEval σ (PHP_atLeastOne n) = true) :
-    ∀ p : Pigeon n, ∃ h : Hole n, σ (phpVarIndex n p h) = true
+    ∀ p : Pigeon n, ∃ h : Hole n, σ (phpVarIndex n p h) = true := by
+  intro p
+  -- 1. 利用 “CNF 为真 ⇒ 所有子句为真”
+  have hAllClauses :=
+    (genCNFEval_true_iff_all_clause_true
+      (σ := σ) (Φ := PHP_atLeastOne n)).mp hσ
+  -- 2. phpClauseAtLeastOne n p 是 PHP_atLeastOne n 中的一个子句
+  have hIn : phpClauseAtLeastOne n p ∈ PHP_atLeastOne n := by
+    -- PHP_atLeastOne n = ofFn (fun p' => phpClauseAtLeastOne n p')
+    dsimp [PHP_atLeastOne]
+    -- 利用 mem_ofFn，显式给出见证 p
+    exact (List.mem_ofFn).2 ⟨p, rfl⟩
+  have hClauseTrue : genClauseEval σ (phpClauseAtLeastOne n p) = true :=
+    hAllClauses _ hIn
+  -- 3. 子句为真 ⇒ 存在某个字面为真
+  have hExistsLit :=
+    (genClauseEval_true_iff_exists_literal
+      (σ := σ) (Γ := phpClauseAtLeastOne n p)).mp hClauseTrue
+  rcases hExistsLit with ⟨ℓ, hmem, hℓtrue⟩
+  -- 4. 用 mem_ofFn 抽出对应的洞 h
+  have hmem' :
+      ℓ ∈ List.ofFn
+        (fun h : Hole n =>
+          ({ var := phpVarIndex n p h, neg := false } :
+            Literal (PHPVar n))) := by
+    -- phpClauseAtLeastOne n p 就是这个 ofFn
+    dsimp [phpClauseAtLeastOne] at hmem
+    simpa using hmem
+  rcases (List.mem_ofFn).1 hmem' with ⟨h, hEq⟩
+  subst hEq
+  -- 5. 展开 literalEval，得到对应变量为 true
+  have : σ (phpVarIndex n p h) = true := by
+    -- neg = false ⇒ literalEval σ ℓ = σ var
+    simpa [literalEval] using hℓtrue
+  exact ⟨h, this⟩
 
 /-- AMO 部分语义公理：
     若 genCNFEval σ (PHP_atMostOne n) = true，
     则对任意洞 h、任意不同鸽子 p₁ ≠ p₂，
-    不可能同时 σ(x_{p₁,h}) = true 且 σ(x_{p₂,h}) = true。 -/
+    不可能同时 σ(x_{p₁,h}) = true 且 σ(x_{p₂,h}) = true。
+
+  TODO：这里完全可以像 ALO 一样用 list/GenCNF 语义证明掉，
+        只是证明会更长，当前版本先保留为 axiom。
+-/
 axiom PHP_atMostOne_sound
     (n : Nat) (σ : Assignment (PHPVar n))
     (hσ : genCNFEval σ (PHP_atMostOne n) = true) :
@@ -271,7 +384,7 @@ theorem PHP_fullGenCNF_sat_implies_injection (n : Nat) :
       genCNFEval σ (PHP_atMostOne n) = true := by
     have := hSplit (by simpa [PHP_fullGenCNF] using hσ)
     simpa using this
-  -- 语义公理
+  -- 语义引理
   have hALO_sem :=
     PHP_atLeastOne_sound (n := n) (σ := σ) hALO
   have hAMO_sem :=
@@ -314,8 +427,8 @@ lemma no_injection_Pigeon_to_Hole (n : Nat) :
       Fintype.card (Pigeon n)
         ≤ Fintype.card (Hole n) :=
     Fintype.card_le_of_injective f hf_inj
+  -- 直接把 card 不等式重写成 n.succ ≤ n
   have h_succ_le : n.succ ≤ n := by
-    -- Pigeon n = Fin (n+1), Hole n = Fin n
     simpa [Pigeon, Hole, Fintype.card_fin, Nat.succ_eq_add_one] using h_card_le
   exact Nat.not_succ_le_self n h_succ_le
 
@@ -332,58 +445,61 @@ lemma PHP_fullGenCNF_unsat (n : Nat) :
 end PigeonholeFamily
 
 ------------------------------------------------------------
--- 4. Tseitin 版 PHP 困难 CNF：HardVarT / HardCNF_T / HardCNF_T_unsat
+-- 4. 参数化 Tseitin + HardCNF_T_unsat（无 oracle）
 ------------------------------------------------------------
 
 open PigeonholeFamily
 
-/-- Tseitin 之后 PHPₙ 的变量总数：
-    原始 PHPVar n 个变量 + Tseitin 引入的辅助变量个数。 -/
+/-- 对 PHP_fullGenCNF n 的某个具体 TseitinEncoding，
+    定义 HardVarT：原始 PHPVar n 个变量 + 辅助变量。 -/
 noncomputable
-def HardVarT (n : Nat) : Nat :=
-  PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars
+def HardVarT (n : Nat)
+    (E : TseitinEncoding (PHPVar n) (PHP_fullGenCNF n)) : Nat :=
+  PHPVar n + E.auxVars
 
-/-- Tseitin 版困难公式：对 PHP_fullGenCNF 做 Tseitin 3-CNF 转换。 -/
+/-- 基于给定编码 E 的“困难 3-CNF” -/
 noncomputable
-def HardCNF_T (n : Nat) : CNF (HardVarT n) :=
-  (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf
+def HardCNF_T (n : Nat)
+    (E : TseitinEncoding (PHPVar n) (PHP_fullGenCNF n)) :
+    CNF (HardVarT n E) :=
+  E.cnf
 
-/-- Tseitin 版困难公式在 Bool 语义下不可满足。 -/
-lemma HardCNF_T_unsat (n : Nat) :
-  ∀ σ' : Assignment (HardVarT n),
-    cnfEval σ' (HardCNF_T n) = false := by
+/-- 对任何满足 equisat 规范的 Tseitin 编码 E，
+    PHP 的 3-CNF 编码在 Bool 语义下不可满足。 -/
+lemma HardCNF_T_unsat (n : Nat)
+    (E : TseitinEncoding (PHPVar n) (PHP_fullGenCNF n)) :
+  ∀ σ' : Assignment (HardVarT n E),
+    cnfEval σ' (HardCNF_T n E) = false := by
   intro σ'
   classical
   -- 已知：原始 PHP_fullGenCNF n 在 GenCNF 语义下不可满足
   have hUnsatGen := PHP_fullGenCNF_unsat n
 
-  -- 第一步：证明不能有 cnfEval σ' (HardCNF_T n) = true
-  have hNotSat : ¬ cnfEval σ' (HardCNF_T n) = true := by
+  -- 第一步：证明不能有 cnfEval σ' (HardCNF_T n E) = true
+  have hNotSat : ¬ cnfEval σ' (HardCNF_T n E) = true := by
     intro hSat
-    -- 1.1 把 σ' 看成 Tseitin CNF 的满足赋值
+    -- 1.1 把 σ' 看成 E.cnf 的满足赋值
     have hSatExist :
         ∃ σ'' :
-          Assignment (PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars),
-          cnfEval σ'' (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf = true := by
-      -- HardVarT n = PHPVar n + auxVars 按定义相等，所以 σ' 就是需要的 σ''
+          Assignment (PHPVar n + E.auxVars),
+          cnfEval σ'' E.cnf = true := by
       refine ⟨σ', ?_⟩
       simpa [HardCNF_T, HardVarT] using hSat
 
-    -- 1.2 利用 Tseitin SAT ⇒ GenCNF SAT 的封装引理
+    -- 1.2 利用 TseitinEncoding 的 equisat 字段
     have hSatGen :
         ∃ σ₀ : Assignment (PHPVar n),
           genCNFEval σ₀ (PHP_fullGenCNF n) = true :=
-      PigeonholeFamily.genSat_of_tseitin_sat
-        (Φ := PHP_fullGenCNF n) hSatExist
+      (E.equisat).mpr hSatExist
 
     -- 1.3 与 PHP_fullGenCNF_unsat 矛盾
     exact hUnsatGen hSatGen
 
   -- 第二步：利用 Bool 二值性：要么 true 要么 false
   have hOr :
-      cnfEval σ' (HardCNF_T n) = true ∨
-      cnfEval σ' (HardCNF_T n) = false := by
-    cases h : cnfEval σ' (HardCNF_T n) <;> simp [h]
+      cnfEval σ' (HardCNF_T n E) = true ∨
+      cnfEval σ' (HardCNF_T n E) = false := by
+    cases h : cnfEval σ' (HardCNF_T n E) <;> simp [h]
 
   -- 选 false 这一支
   cases hOr with
@@ -393,7 +509,6 @@ lemma HardCNF_T_unsat (n : Nat) :
       exact hFalse
 
 end StructuralAction
-
 
 
 
