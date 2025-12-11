@@ -680,10 +680,7 @@ def simplify {n : Nat} (C : RClause n) : RClause n :=
     C₁
 
 /-- 单步 Resolution：从 (ℓ :: C) 和 (¬ℓ :: D) 推出 C ∪ D，
-    并做一次简化（去重 / 互补检查）。
-
-    这里作为“原始操作”只给出构造性的子句结果，
-    soundness 之后再补。 -/
+    并做一次简化（去重 / 互补检查）。 -/
 def resolveOneStep {n : Nat}
     (ℓ : Literal n)
     (C D : RClause n) : RClause n :=
@@ -733,7 +730,7 @@ end Resolution
 
 ------------------------------------------------------------
 -- 11. AbstractDPLL：带 decisionLevel / antecedent / resSteps
---     的状态 + UnitProp / ConflictAnalyze 语义骨架
+--     的状态 + UnitProp / ConflictAnalyze / Backjump
 ------------------------------------------------------------
 
 namespace AbstractDPLL
@@ -784,7 +781,7 @@ structure State (n : Nat) where
   resSteps      : Nat
 
 --------------------------------------------------
--- 11.3 Trail 相关辅助：真假判断 / antecedent 反向查找
+-- 11.3 Trail 相关辅助：真假判断 / level / antecedent
 --------------------------------------------------
 
 /-- 字面 ℓ 是否在 trail 中被赋为 True（即 trail 里就有这个字面）。 -/
@@ -796,7 +793,8 @@ def litIsFalse {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
   τ.any (fun e => e.lit = litNeg ℓ)
 
 /-- 在给定 trail 下，从子句 C 里收集“未赋值的字面”。 -/
-def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) : List (Literal n) :=
+def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) :
+    List (Literal n) :=
   C.filter (fun ℓ => !litIsTrue τ ℓ && !litIsFalse τ ℓ)
 
 /-- 在 Trail 上查找某个字面的 antecedent 子句（若存在）。 -/
@@ -812,20 +810,17 @@ def litLevel {n : Nat} (τ : Trail n) (ℓ : Literal n) : Option Nat :=
   | none     => none
   | some ent => some ent.level
 
+/-- 带缺省值版本：若字面不在 trail 中，则视为层级 0。 -/
+def litLevelDflt {n : Nat} (τ : Trail n) (ℓ : Literal n) : Nat :=
+  match litLevel τ ℓ with
+  | some l => l
+  | none   => 0
+
 --------------------------------------------------
 -- 11.4 Unit Propagation：递归辅助 + 顶层函数
 --------------------------------------------------
 
-/-- Unit Propagation 的递归辅助函数：
-    给定 trail τ、固定的状态 s 和一串子句列表，尝试做一次：
-    * 如果发现某个子句在 τ 下：
-      - 已满足：跳过；
-      - 成为空子句（所有字面都为 False）：产生 conflict；
-      - 是 unit 子句（恰好一个未赋值字面）：把该字面以 antecedent = 该子句 推入 trail；
-      - 否则：继续看后面的子句。
-
-    注意：这个版本最多执行一次“有效动作”（产生 conflict 或推一个 unit），
-    找到第一个触发的子句就停下。 -/
+/-- Unit Propagation 的递归辅助函数。 -/
 def unitPropagateAux {n : Nat}
     (τ : Trail n) (s : State n) :
     List (RClause n) → State n
@@ -852,12 +847,9 @@ def unitPropagateAux {n : Nat}
             -- 还有多个未赋值字面，C 既不是冲突也不是 unit，继续扫后面的子句
             unitPropagateAux τ s Cs
 
-/-- Unit Propagation：
-    * 如果已经在 conflict 状态，则保持不变；
-    * 否则，在 ΦR ∪ learnt ∪ pending 中做一次 unit propagation 探测。 -/
+/-- Unit Propagation 顶层。 -/
 def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   if h : s.conflict ≠ none then
-    -- 已经有 conflict，就不再做新的传播
     s
   else
     let clauses : List (RClause n) := ΦR ++ s.learnt ++ s.pending
@@ -895,21 +887,7 @@ structure AnalyzeResult (n : Nat) where
   learnt   : RClause n
   resSteps : Nat
 
-/-- 冲突分析核心递归：
-    * τ   : 当前 Trail；
-    * C₀  : 初始冲突子句；
-    * lvl : 当前 decisionLevel；
-    * fuel: 递归燃料，保证总是终止。
-
-    简化版策略：
-    1. 若 fuel = 0，直接返回 simplify C₀。
-    2. 否则：
-       * 若当前层级的文字数 ≤ 1，则停止，返回 simplify C₀；
-       * 否则选择一个当前层级的文字 ℓ：
-         · 若找不到 antecedent，则停止；
-         · 若有 antecedent C_ant，则执行一次 resolveOneStep ℓ C₀ C_ant，
-           得到 C_next，并在 fuel' 上递归。
- -/
+/-- 冲突分析核心递归（简化版 UIP/backjump）： -/
 def analyzeConflictCore {n : Nat}
     (τ : Trail n) (C₀ : RClause n) (lvl fuel : Nat) :
     AnalyzeResult n :=
@@ -943,28 +921,33 @@ def analyzeConflictCore {n : Nat}
                   resSteps := resNext.resSteps.succ }
 
 --------------------------------------------------
--- 11.6 ConflictAnalyze / backtrack / decide
+-- 11.6 Backjump 辅助：从 learnt 子句计算回跳层级并裁剪 trail
+--------------------------------------------------
+
+/-- 计算一个子句在当前 trail 下出现的最大决策层级（缺省 0）。 -/
+def maxLevelInClause {n : Nat} (τ : Trail n) (C : RClause n) : Nat :=
+  C.foldl (fun acc ℓ => Nat.max acc (litLevelDflt τ ℓ)) 0
+
+/-- 给定目标决策层级 lvl，把 trail 裁剪为只保留 level ≤ lvl 的条目。 -/
+def backtrackTrail {n : Nat} (τ : Trail n) (lvl : Nat) : Trail n :=
+  τ.filter (fun e => e.level ≤ lvl)
+
+--------------------------------------------------
+-- 11.7 ConflictAnalyze / Backtrack / Decide
 --------------------------------------------------
 
 /-- Conflict Analyze：
-    * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
-    * 当前构造性骨架：
-        - 若无 conflict，则原样返回；
-        - 若有 conflict 子句 C_conf：
-            · 调用 analyzeConflictCore 沿 trail / antecedent 做有限次 resolve；
-            · 得到 learnt 子句及 resSteps；
-            · 将 learnt 压入 learnt 列表；
-            · 清空 conflict；
-            · resSteps 累加到状态里，用于 density 计价。 -/
+    * 当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句，
+      并累积 resSteps。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   match s.conflict with
   | none => s
   | some C_conf =>
       let lvl  := s.decisionLevel
       let τ    := s.trail
-      -- 一个简单的燃料上界：和所有子句 / trail 长度之和同阶
+      -- 简单的燃料上界：与 trail / 子句数量同阶，保证终止
       let fuel :=
-        τ.length + ΦR.length + s.learnt.length + s.pending.length
+        τ.length + ΦR.length + s.learnt.length + s.pending.length + 1
       let res := analyzeConflictCore τ C_conf lvl fuel
       let C_learnt := Resolution.simplify res.learnt
       { s with
@@ -972,20 +955,28 @@ def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
         conflict := none,
         resSteps := s.resSteps + res.resSteps }
 
-/-- Backtrack：
-    * 目标：根据冲突分析的结果回溯 trail（CDCL 的 backjump）；
-    * 当前骨架：暂时直接返回原状态。 -/
+/-- Backtrack / Backjump：
+    * 利用刚刚学习到的首个 learnt 子句 C_learnt，
+      计算其中文字在 trail 上的最大决策层级 Lmax；
+    * 回跳到 newLevel = Lmax（简化版 backjump）；
+    * 丢弃 trail 中 level > newLevel 的条目；
+    * 不改变 learnt / pending / resSteps。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
-  -- TODO：根据 learnt 子句中的决策层级，裁剪 trail 并调整 decisionLevel。
-  s
+  match s.learnt with
+  | [] => s
+  | C_learnt :: _ =>
+      let τ       := s.trail
+      let Lmax    := maxLevelInClause τ C_learnt
+      let newLvl  := Lmax
+      let τ'      := backtrackTrail τ newLvl
+      { trail         := τ'
+        decisionLevel := newLvl
+        learnt        := s.learnt
+        pending       := s.pending
+        conflict      := s.conflict   -- 通常已在 conflictAnalyze 中清空
+        resSteps      := s.resSteps }
 
-/-- Decide：
-    * 目标：在没有 unit / 冲突时，选择一个未赋值的变量做决策；
-    * 实现：如果 pending 非空且其中首子句非空，取该子句的首字面为决策；
-      提升 decisionLevel 并把决策写入 trail；
-      否则保持不变。
-
-    ★ 不再使用 `⟨0, by decide⟩`，避免出现 `0 < n` 的自由变量目标。 -/
+/-- Decide：在没有 unit / 冲突时，选择一个未赋值的变量做决策。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
@@ -1006,10 +997,10 @@ def decide {n : Nat} (s : State n) : State n :=
             resSteps      := s.resSteps }
 
 --------------------------------------------------
--- 11.7 抽象 DPLL 模型：用上述四个操作组合成一步 step
+-- 11.8 抽象 DPLL 模型：init / step / halting
 --------------------------------------------------
 
-/-- 初始状态：trail 为空；决策层级 0；learnt 为空；pending = 原公式的 RCNF ；无冲突；resSteps = 0。 -/
+/-- 初始状态。 -/
 def initState {n : Nat} (Φ : CNF n) : State n :=
   { trail         := []
     decisionLevel := 0
@@ -1018,12 +1009,7 @@ def initState {n : Nat} (Φ : CNF n) : State n :=
     conflict      := none
     resSteps      := 0 }
 
-/-- 抽象 DPLL 模型：
-    * init : 建立 initState；
-    * step : unitPropagate → conflictAnalyze → backtrack → decide 的组合；
-    * halting :
-        - 要么 pending = []（公式“解决完了”）
-        - 要么 conflict ≠ none（找到了冲突 / 反驳）。 -/
+/-- 抽象 DPLL 模型。 -/
 noncomputable
 def Model (n : Nat) : AlgorithmModel n :=
   { StateType := State n
@@ -1039,14 +1025,10 @@ def Model (n : Nat) : AlgorithmModel n :=
       s.pending = [] ∨ s.conflict ≠ none }
 
 --------------------------------------------------
--- 11.8 结构密度 λ'：每一步至少付出 1 单位 Action，
---      冲突分析中的 Resolution 步数作为额外成本。
+-- 11.9 结构密度 λ'：每一步至少付出 1 单位 Action + resSteps
 --------------------------------------------------
 
-/-- 密度：
-    * 基础成本 = 1；
-    * 叠加 resSteps（累积的 Resolution 步数），
-      未来可以改为“本步增量”，这里先用总量骨架。 -/
+/-- 密度：至少 1，并叠加 resSteps。 -/
 def density (n : Nat) (s : State n) : Nat :=
   s.resSteps.succ
 
@@ -1079,7 +1061,7 @@ lemma dpll_pathActionNat_ge_steps (n : Nat)
   exact h
 
 --------------------------------------------------
--- 11.9 Resolution → DPLLPath 的“模拟骨架”（仍为公理）
+-- 11.10 Resolution → DPLLPath 的“模拟骨架”（仍为公理）
 --------------------------------------------------
 
 /-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
@@ -1091,11 +1073,7 @@ structure Simulation {n : Nat} (Φ : CNF n)
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
 
-/-- 存在模拟：Resolution 反驳 ⇒ 存在一条 DPLL 轨迹 ψ，
-    使得 Action(ψ) ≥ proofLength(π)。
-
-    ⭐ 当前仍然是公理（axiom），
-       你的终极目标是把它变成真正的 theorem。 -/
+/-- 存在模拟：当前仍为公理，未来要变成真正的定理。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ) (π := π)
@@ -1113,10 +1091,7 @@ section HardFamilySchema
 open Resolution
 open AbstractDPLL
 
-/-- 一个抽象的 “Resolution 困难族”：
-    * m : 每个规模 n 对应的变量个数 m n；
-    * F : 每个 n 的 CNF 公式 F n : CNF (m n)；
-    * π : 每个 F n 的一个 Resolution 反驳（Refutes）。 -/
+/-- 一个抽象的 “Resolution 困难族”。 -/
 structure HardFamily where
   m : Nat → Nat
   F : ∀ n, CNF (m n)
@@ -1126,8 +1101,7 @@ structure HardFamily where
 def resLengthSeq (H : HardFamily) : ActionSeq :=
   fun n => Resolution.proofLength (H.π n)
 
-/-- 从一个 Resolution 困难族 H 构造对应的 DPLL 作用量族：
-    对每个 n，取 exists_simulation 给出的 DPLL 轨迹 ψ_n 的 pathActionNat。 -/
+/-- 从一个 Resolution 困难族 H 构造对应的 DPLL 作用量族。 -/
 noncomputable
 def hardActionFromFamily (H : HardFamily) : ActionSeq :=
   fun n =>
@@ -1146,12 +1120,10 @@ lemma hardActionFromFamily_ge_resLength (H : HardFamily) :
   ∀ n, resLengthSeq H n ≤ hardActionFromFamily H n := by
   intro n
   classical
-  -- 固定 n 下的模拟
   let sim :=
     AbstractDPLL.exists_simulation
       (Φ := H.F n)
       (π := H.π n)
-  -- 把目标改写成关于 sim 的形式
   change
     Resolution.proofLength (H.π n)
       ≤
@@ -1160,7 +1132,6 @@ lemma hardActionFromFamily_ge_resLength (H : HardFamily) :
       (H.F n)
       (AbstractDPLL.density (H.m n))
       sim.ψ
-  -- 这正是 Simulation.hA 的内容
   exact sim.hA
 
 /-- 若某个 HardFamily 的 Resolution 反驳族存在指数下界，
@@ -1170,12 +1141,9 @@ lemma expLower_lift_from_res_to_dpll
     (hRes : ExpLower_2pow (resLengthSeq H)) :
     ExpLower_2pow (hardActionFromFamily H) := by
   intro n
-  -- Resolution 侧：2^n ≤ proofLength(π n)
   have h1 : (2 : Nat)^n ≤ resLengthSeq H n := hRes n
-  -- Simulation 侧：proofLength(π n) ≤ DPLL Action(n)
   have h2 : resLengthSeq H n ≤ hardActionFromFamily H n :=
     hardActionFromFamily_ge_resLength H n
-  -- 合成得到指数下界提升
   exact le_trans h1 h2
 
 end HardFamilySchema
@@ -1207,6 +1175,7 @@ theorem no_polyTime_DPLL_on_HardFamily
 end StructuralAction
 
 end StructuralAction
+
 
 
 
