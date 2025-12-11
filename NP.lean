@@ -299,6 +299,7 @@ end PigeonholeFamily
 
 ------------------------------------------------------------
 -- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
+--    这里采用 PHPVar n = (n+1)*n + 1，上界 + dummy 变量
 ------------------------------------------------------------
 
 open PigeonholeFamily
@@ -310,6 +311,7 @@ abbrev Pigeon (n : Nat) := Fin (n + 1)
 abbrev Hole (n : Nat) := Fin n
 
 -- PHPₙ 的布尔变量个数上界：(n+1)*n + 1
+-- 解释：最后一个变量索引永远不会被使用，可以当作 dummy 变量。
 abbrev PHPVar (n : Nat) : Nat :=
   Nat.succ ((n + 1) * n)
 
@@ -323,20 +325,33 @@ def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
     have hp_le : p.1 ≤ n := Nat.le_of_lt_succ p.2
     have hh_lt : h.1 < n := h.2
     have hh_le : h.1 ≤ n - 1 := Nat.le_pred_of_lt hh_lt
+
+    -- 1. 先把 h.1 换成 n - 1 的上界
     have h1a : p.1 * n + h.1 ≤ p.1 * n + (n - 1) :=
       Nat.add_le_add_left hh_le _
+
+    -- 2. 再把 p.1 换成 n 的上界
     have hp_mul : p.1 * n ≤ n * n :=
       Nat.mul_le_mul_right _ hp_le
     have h1b : p.1 * n + (n - 1) ≤ n * n + (n - 1) :=
       Nat.add_le_add_right hp_mul _
+
+    -- 3. 把 (n - 1) 换成 n 的上界
     have h1c : n * n + (n - 1) ≤ n * n + n := by
       have : n - 1 ≤ n := Nat.sub_le _ _
       exact Nat.add_le_add_left this _
+
+    -- 4. 合并得到 p.1 * n + h.1 ≤ n * n + n
     have h_total : p.1 * n + h.1 ≤ n * n + n :=
       le_trans (le_trans h1a h1b) h1c
+
+    -- 5. 把 n * n + n 改写成 (n + 1) * n
     have h_le : p.1 * n + h.1 ≤ (n + 1) * n := by
       simpa [Nat.mul_add, Nat.add_comm, Nat.add_left_comm,
              Nat.add_assoc, Nat.mul_comm] using h_total
+
+    -- 6. 利用 succ 得到严格不等式：
+    --    p.1 * n + h.1 < ((n + 1) * n) + 1 = PHPVar n
     have : p.1 * n + h.1 < ((n + 1) * n) + 1 :=
       Nat.lt_succ_of_le h_le
     simpa [PHPVar] using this ⟩
@@ -644,7 +659,7 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 系统（修正版：RClause = List (Literal n)）
+-- 10. Resolution 系统（RClause = List (Literal n)）
 ------------------------------------------------------------
 
 namespace Resolution
@@ -688,9 +703,7 @@ def resolveOneStep {n : Nat}
   let D' := D.filter (fun x => x ≠ litNeg ℓ)
   simplify (merge C' D')
 
-/-- Resolution 推导关系：
-    注意返回值在 `Type` 中，这样我们可以在上面做一般递归
-    （例如定义长度）。 -/
+/-- Resolution 推导关系（语义系统，暂不直接用 resolveOneStep 构造）。 -/
 inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
   | axiom (C : RClause n) (hC : C ∈ Φ) :
       Derives Φ C
@@ -730,7 +743,7 @@ end Resolution
 
 ------------------------------------------------------------
 -- 11. AbstractDPLL：带 decisionLevel / antecedent / resSteps
---     的状态 + UnitProp / ConflictAnalyze / Backjump
+--     的状态 + UnitProp / ConflictAnalyze / Backtrack
 ------------------------------------------------------------
 
 namespace AbstractDPLL
@@ -887,7 +900,9 @@ structure AnalyzeResult (n : Nat) where
   learnt   : RClause n
   resSteps : Nat
 
-/-- 冲突分析核心递归（简化版 UIP/backjump）： -/
+/-- 冲突分析核心递归（简化版 UIP/backjump）：
+    通过 trail 的 antecedent 链条，反复对冲突子句做 resolveOneStep，
+    fuel 只是一个保证终止的上界。 -/
 def analyzeConflictCore {n : Nat}
     (τ : Trail n) (C₀ : RClause n) (lvl fuel : Nat) :
     AnalyzeResult n :=
@@ -1073,7 +1088,8 @@ structure Simulation {n : Nat} (Φ : CNF n)
   hA : pathActionNat (Model n) Φ (density n) ψ
         ≥ proofLength π
 
-/-- 存在模拟：当前仍为公理，未来要变成真正的定理。 -/
+/-- 存在模拟：
+    ★ 这里仍然作为公理存在，是整个框架的唯一“重”假设。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ) (π := π)
@@ -1083,8 +1099,6 @@ end AbstractDPLL
 ------------------------------------------------------------
 -- 12. Resolution-hard family → DPLL-hard action family
 ------------------------------------------------------------
-
-namespace StructuralAction
 
 section HardFamilySchema
 
@@ -1146,15 +1160,6 @@ lemma expLower_lift_from_res_to_dpll
     hardActionFromFamily_ge_resLength H n
   exact le_trans h1 h2
 
-end HardFamilySchema
-
-end StructuralAction
-
-namespace StructuralAction
-
-open Resolution
-open AbstractDPLL
-
 /-- 把 “Resolution 困难族在证明长度上有指数下界”
     和 “对应的 DPLL 作用量族有多项式上界” 拼在一起，
     得到矛盾。 -/
@@ -1164,15 +1169,17 @@ theorem no_polyTime_DPLL_on_HardFamily
     (hUpper : PolyUpper_general (hardActionFromFamily H)) :
     False :=
   by
+    -- 用上面的提升引理，把 Resolution 的指数下界搬到 DPLL 侧
     have hLowerDPLL : ExpLower_2pow (hardActionFromFamily H) :=
       expLower_lift_from_res_to_dpll H hRes
+    -- 再用 toy_hardFamily_contradiction 得到矛盾
     exact
       no_polyTime_on_family
         (A      := hardActionFromFamily H)
         (hLower := hLowerDPLL)
         (hUpper := hUpper)
 
-end StructuralAction
+end HardFamilySchema
 
 end StructuralAction
 
