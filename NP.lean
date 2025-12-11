@@ -295,9 +295,13 @@ lemma genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
 
 end Tseitin
 
+end PigeonholeFamily
+
 ------------------------------------------------------------
 -- 4. 鸽笼原理 PHPₙ 的变量编码 + CNF 族
 ------------------------------------------------------------
+
+open PigeonholeFamily
 
 -- 第 n 个鸽子：共有 n+1 只鸽子
 abbrev Pigeon (n : Nat) := Fin (n + 1)
@@ -402,8 +406,6 @@ axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
   ↔
   (∃ f : Pigeon n → Hole n, Function.Injective f)
 
-end PigeonholeFamily
-
 ------------------------------------------------------------
 -- 5. 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
 ------------------------------------------------------------
@@ -411,7 +413,6 @@ end PigeonholeFamily
 section PigeonholeMath
 
 open Function
-open PigeonholeFamily
 
 lemma no_injection_Pigeon_to_Hole (n : Nat) :
     ¬ ∃ f : Pigeon n → Hole n, Function.Injective f := by
@@ -432,8 +433,6 @@ end PigeonholeMath
 ------------------------------------------------------------
 
 section PHPUnsat
-
-open PigeonholeFamily
 
 -- PHP_fullGenCNF 不可满足
 lemma PHP_fullGenCNF_unsat (n : Nat) :
@@ -486,8 +485,6 @@ end PHPUnsat
 ------------------------------------------------------------
 
 section PHPUnsatTseitin
-
-open PigeonholeFamily
 
 /-- Tseitin 之后 PHPₙ 的变量总数：
     原始 PHPVar n 个变量 + Tseitin 引入的辅助变量个数。 -/
@@ -664,6 +661,36 @@ abbrev RCNF (n : Nat) := List (RClause n)
 def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
+/-- 合并两个子句（集合视角：C ∪ D）。目前简单实现为列表拼接，再做去重。 -/
+def merge {n : Nat} (C D : RClause n) : RClause n :=
+  (C ++ D).eraseDups
+
+/-- 判断两个字面是否互补：变量相同，极性相反。 -/
+def isComplement {n : Nat} (ℓ₁ ℓ₂ : Literal n) : Bool :=
+  decide (ℓ₁.var = ℓ₂.var ∧ ℓ₁.neg ≠ ℓ₂.neg)
+
+/-- 简单规范化子句：
+    * 去重；
+    * 若存在互补对，则返回空子句（视作永真子句，可在 ConflictAnalyze 时忽略）。 -/
+def simplify {n : Nat} (C : RClause n) : RClause n :=
+  let C₁ := C.eraseDups
+  if h : ∃ ℓ₁ ∈ C₁, ∃ ℓ₂ ∈ C₁, isComplement ℓ₁ ℓ₂ = true then
+    []
+  else
+    C₁
+
+/-- 单步 Resolution：从 (ℓ :: C) 和 (¬ℓ :: D) 推出 C ∪ D，
+    并做一次简化（去重 / 互补检查）。
+
+    这里作为“原始操作”只给出构造性的子句结果，
+    soundness 之后再补。 -/
+def resolveOneStep {n : Nat}
+    (ℓ : Literal n)
+    (C D : RClause n) : RClause n :=
+  let C' := C.filter (fun x => x ≠ ℓ)
+  let D' := D.filter (fun x => x ≠ litNeg ℓ)
+  simplify (merge C' D')
+
 /-- Resolution 推导关系：
     注意返回值在 `Type` 中，这样我们可以在上面做一般递归
     （例如定义长度）。 -/
@@ -702,52 +729,11 @@ axiom resolutionRefutation_expLower_2pow :
   ∃ (Len : StructuralAction.ActionSeq),
     StructuralAction.ExpLower_2pow Len
 
---------------------------------------------------
--- 10.x 子句规范化辅助函数：merge / simplify / resolveOneStep
---------------------------------------------------
-
-/-- 合并两个子句：语义上是 C ∪ D，这里先实现成列表连接，
-    后面交给 `simplify` 去做去重和互补对处理。 -/
-def merge {n : Nat} (C D : RClause n) : RClause n :=
-  C ++ D
-
-/-- 在子句 C 中检测某个字面 ℓ 是否出现。 -/
-def clauseContains {n : Nat} (C : RClause n) (ℓ : Literal n) : Bool :=
-  C.any (fun m => m = ℓ)
-
-/-- 在子句 C 中检测是否出现 ℓ 的互补字面 ¬ℓ。 -/
-def clauseContainsNeg {n : Nat} (C : RClause n) (ℓ : Literal n) : Bool :=
-  C.any (fun m => m = litNeg ℓ)
-
-/-- 子句规范化：
-    * 去重：同一个字面只保留一次；
-    * 去互补对：如果已经包含某个字面的否定，就不再加入这个字面，
-      从而确保同一个子句中不会同时出现 ℓ 和 ¬ℓ。 -/
-def simplify {n : Nat} (C : RClause n) : RClause n :=
-  C.foldl
-    (fun acc ℓ =>
-      if clauseContains acc ℓ then
-        acc
-      else if clauseContainsNeg acc ℓ then
-        acc
-      else
-        acc ++ [ℓ])
-    ([] : RClause n)
-
-/-- 单步 Resolution 操作：
-    给定字面 ℓ 和两个子句 C, D，执行
-      C ∨ ℓ,  D ∨ ¬ℓ   ⊢   simplify((C \ {ℓ}) ∪ (D \ {¬ℓ})).
- -/
-def resolveOneStep {n : Nat}
-    (ℓ : Literal n) (C D : RClause n) : RClause n :=
-  let C' : RClause n := C.filter (fun m => m ≠ ℓ)
-  let D' : RClause n := D.filter (fun m => m ≠ litNeg ℓ)
-  simplify (merge C' D')
-
 end Resolution
 
 ------------------------------------------------------------
--- 11. AbstractDPLL：带 decisionLevel / antecedent 的状态 + UnitProp 语义骨架
+-- 11. AbstractDPLL：带 decisionLevel / antecedent / resSteps
+--     的状态 + UnitProp / ConflictAnalyze 语义骨架
 ------------------------------------------------------------
 
 namespace AbstractDPLL
@@ -770,7 +756,7 @@ def cnfToRCNF {n : Nat} (Φ : CNF n) : RCNF n :=
   Φ.map clauseToRClause
 
 --------------------------------------------------
--- 11.2 Trail / State：加入 decisionLevel 与 antecedent
+-- 11.2 Trail / State：加入 decisionLevel / antecedent / resSteps
 --------------------------------------------------
 
 /-- Trail 中的一个条目：包含字面、决策层级以及产生它的前因子句。 -/
@@ -788,7 +774,7 @@ abbrev Trail (n : Nat) := List (TrailEntry n)
     * learnt         : 已学习子句（Resolution 视角下的派生子句）
     * pending        : 尚未处理 / 还在原公式里的子句
     * conflict       : 如果当前发现冲突，则存一个冲突子句（或 `[]`）
-    * resSteps       : 本次 step 中 ConflictAnalyze 所用的 Resolution 步数。 -/
+    * resSteps       : 累积的 Resolution 步数（只在 ConflictAnalyze 中增加） -/
 structure State (n : Nat) where
   trail         : Trail n
   decisionLevel : Nat
@@ -798,23 +784,7 @@ structure State (n : Nat) where
   resSteps      : Nat
 
 --------------------------------------------------
--- 11.2' Trail 反向查找：根据字面找 antecedent
---------------------------------------------------
-
-/-- 在 Trail τ 中查找给定字面 ℓ 的 antecedent 子句。
-
-    语义：
-    * 找到第一个满足 e.lit = ℓ 的 TrailEntry；
-    * 若该条目的 antecedent = some C，则返回 some C；
-    * 否则（没找到 / antecedent = none）返回 none。 -/
-def findAntecedent {n : Nat}
-    (τ : Trail n) (ℓ : Literal n) : Option (RClause n) :=
-  match τ.find? (fun e => e.lit = ℓ) with
-  | none       => none
-  | some entry => entry.antecedent
-
---------------------------------------------------
--- 11.3 辅助函数：在 trail 下判断字面真假 + unit 子句检测
+-- 11.3 Trail 相关辅助：真假判断 / antecedent 反向查找
 --------------------------------------------------
 
 /-- 字面 ℓ 是否在 trail 中被赋为 True（即 trail 里就有这个字面）。 -/
@@ -826,15 +796,36 @@ def litIsFalse {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
   τ.any (fun e => e.lit = litNeg ℓ)
 
 /-- 在给定 trail 下，从子句 C 里收集“未赋值的字面”。 -/
-def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) :
-    List (Literal n) :=
+def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) : List (Literal n) :=
   C.filter (fun ℓ => !litIsTrue τ ℓ && !litIsFalse τ ℓ)
+
+/-- 在 Trail 上查找某个字面的 antecedent 子句（若存在）。 -/
+def findAntecedent {n : Nat} (τ : Trail n) (ℓ : Literal n) :
+    Option (RClause n) :=
+  match τ.find? (fun e => e.lit = ℓ) with
+  | none      => none
+  | some ent  => ent.antecedent
+
+/-- Trail 中给定字面的决策层级（若未出现在 trail 中，则为 none）。 -/
+def litLevel {n : Nat} (τ : Trail n) (ℓ : Literal n) : Option Nat :=
+  match τ.find? (fun e => e.lit = ℓ) with
+  | none     => none
+  | some ent => some ent.level
 
 --------------------------------------------------
 -- 11.4 Unit Propagation：递归辅助 + 顶层函数
 --------------------------------------------------
 
-/-- Unit Propagation 的递归辅助函数：最多触发一次动作。 -/
+/-- Unit Propagation 的递归辅助函数：
+    给定 trail τ、固定的状态 s 和一串子句列表，尝试做一次：
+    * 如果发现某个子句在 τ 下：
+      - 已满足：跳过；
+      - 成为空子句（所有字面都为 False）：产生 conflict；
+      - 是 unit 子句（恰好一个未赋值字面）：把该字面以 antecedent = 该子句 推入 trail；
+      - 否则：继续看后面的子句。
+
+    注意：这个版本最多执行一次“有效动作”（产生 conflict 或推一个 unit），
+    找到第一个触发的子句就停下。 -/
 def unitPropagateAux {n : Nat}
     (τ : Trail n) (s : State n) :
     List (RClause n) → State n
@@ -874,48 +865,114 @@ def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
     unitPropagateAux τ s clauses
 
 --------------------------------------------------
--- 11.5 ConflictAnalyze / backtrack / decide
+-- 11.5 冲突分析核心：计数 / 选择 / 递归 resolve
 --------------------------------------------------
 
-/-- 内部递归：从当前冲突子句出发，沿着 Trail 反向做 Resolution，
-    累积当前子句与使用的 Resolution 步数。 -/
-private def conflictAnalyzeLoop {n : Nat}
-    (τ : Trail n) (current : RClause n) (steps : Nat) :
-    Nat × RClause n :=
-  match τ with
-  | [] => (steps, current)
-  | e :: τ' =>
-      match e.antecedent with
-      | none =>
-          -- 该字面是决策字面，没有前因；跳过
-          conflictAnalyzeLoop τ' current steps
-      | some A =>
-          -- 如果 current 中包含 e.lit，则用它和 A 做一步 Resolution
-          if hMem : current.any (fun ℓ => ℓ = e.lit) then
-            let current' := Resolution.resolveOneStep e.lit current A
-            conflictAnalyzeLoop τ' current' (steps.succ)
-          else
-            conflictAnalyzeLoop τ' current steps
+/-- 统计一个子句中，在给定 decisionLevel 下出现的文字个数。 -/
+def countLitsAtLevel {n : Nat}
+    (τ : Trail n) (C : RClause n) (lvl : Nat) : Nat :=
+  C.foldl
+    (fun acc ℓ =>
+      match litLevel τ ℓ with
+      | some l =>
+          if l = lvl then acc.succ else acc
+      | none   => acc)
+    0
+
+/-- 从子句中挑出一个位于给定 decisionLevel 的文字（若存在）。 -/
+def pickLitAtLevel? {n : Nat}
+    (τ : Trail n) (C : RClause n) (lvl : Nat) :
+    Option (Literal n) :=
+  C.find? (fun ℓ =>
+    match litLevel τ ℓ with
+    | some l => l = lvl
+    | none   => False)
+
+/-- 冲突分析返回结果：
+    * learnt  : 学到的子句；
+    * resSteps: 在分析过程中所做的 Resolution 步数。 -/
+structure AnalyzeResult (n : Nat) where
+  learnt   : RClause n
+  resSteps : Nat
+
+/-- 冲突分析核心递归：
+    * τ   : 当前 Trail；
+    * C₀  : 初始冲突子句；
+    * lvl : 当前 decisionLevel；
+    * fuel: 递归燃料，保证总是终止。
+
+    简化版策略：
+    1. 若 fuel = 0，直接返回 simplify C₀。
+    2. 否则：
+       * 若当前层级的文字数 ≤ 1，则停止，返回 simplify C₀；
+       * 否则选择一个当前层级的文字 ℓ：
+         · 若找不到 antecedent，则停止；
+         · 若有 antecedent C_ant，则执行一次 resolveOneStep ℓ C₀ C_ant，
+           得到 C_next，并在 fuel' 上递归。
+ -/
+def analyzeConflictCore {n : Nat}
+    (τ : Trail n) (C₀ : RClause n) (lvl fuel : Nat) :
+    AnalyzeResult n :=
+  match fuel with
+  | 0 =>
+      { learnt   := Resolution.simplify C₀
+        resSteps := 0 }
+  | Nat.succ fuel' =>
+      let cnt := countLitsAtLevel τ C₀ lvl
+      if hcnt : cnt ≤ 1 then
+        -- 已经满足（近似）UIP 条件：不再继续 resolve
+        { learnt   := Resolution.simplify C₀
+          resSteps := 0 }
+      else
+        match pickLitAtLevel? τ C₀ lvl with
+        | none =>
+            -- 理论上不会发生（因为 cnt > 1），但为安全起见做兜底
+            { learnt   := Resolution.simplify C₀
+              resSteps := 0 }
+        | some ℓ =>
+            match findAntecedent τ ℓ with
+            | none =>
+                -- 没有 antecedent，无法继续反向解析，兜底
+                { learnt   := Resolution.simplify C₀
+                  resSteps := 0 }
+            | some C_ant =>
+                -- 真正做一次 Resolution 步
+                let C_next := Resolution.resolveOneStep ℓ C₀ C_ant
+                let resNext := analyzeConflictCore τ C_next lvl fuel'
+                { learnt   := resNext.learnt
+                  resSteps := resNext.resSteps.succ }
+
+--------------------------------------------------
+-- 11.6 ConflictAnalyze / backtrack / decide
+--------------------------------------------------
 
 /-- Conflict Analyze：
-    * 若 s.conflict = none：什么都不做；
-    * 若 s.conflict = some C：
-        - 在 Trail 上跑 conflictAnalyzeLoop 得到学习子句 learntC 和
-          本次发生的 Resolution 步数 k；
-        - 把 learntC 加入 learnt；
-        - 清空 conflict；
-        - 把 resSteps 设为 k（即 λ_Resolution 这一步的增量）。 -/
+    * 目标：当 conflict ≠ none 时，利用 Resolution 分析冲突，生成 learnt 子句；
+    * 当前构造性骨架：
+        - 若无 conflict，则原样返回；
+        - 若有 conflict 子句 C_conf：
+            · 调用 analyzeConflictCore 沿 trail / antecedent 做有限次 resolve；
+            · 得到 learnt 子句及 resSteps；
+            · 将 learnt 压入 learnt 列表；
+            · 清空 conflict；
+            · resSteps 累加到状态里，用于 density 计价。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   match s.conflict with
   | none => s
-  | some C =>
-      let (k, learntC) := conflictAnalyzeLoop s.trail C 0
+  | some C_conf =>
+      let lvl  := s.decisionLevel
+      let τ    := s.trail
+      -- 一个简单的燃料上界：和所有子句 / trail 长度之和同阶
+      let fuel :=
+        τ.length + ΦR.length + s.learnt.length + s.pending.length
+      let res := analyzeConflictCore τ C_conf lvl fuel
+      let C_learnt := Resolution.simplify res.learnt
       { s with
-        learnt   := learntC :: s.learnt
-        conflict := none
-        resSteps := k }
+        learnt   := C_learnt :: s.learnt,
+        conflict := none,
+        resSteps := s.resSteps + res.resSteps }
 
- /-- Backtrack：
+/-- Backtrack：
     * 目标：根据冲突分析的结果回溯 trail（CDCL 的 backjump）；
     * 当前骨架：暂时直接返回原状态。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
@@ -926,7 +983,9 @@ def backtrack {n : Nat} (s : State n) : State n :=
     * 目标：在没有 unit / 冲突时，选择一个未赋值的变量做决策；
     * 实现：如果 pending 非空且其中首子句非空，取该子句的首字面为决策；
       提升 decisionLevel 并把决策写入 trail；
-      否则保持不变。 -/
+      否则保持不变。
+
+    ★ 不再使用 `⟨0, by decide⟩`，避免出现 `0 < n` 的自由变量目标。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
@@ -939,12 +998,15 @@ def decide {n : Nat} (s : State n) : State n :=
             { lit        := lit
               level      := newLevel
               antecedent := none }
-          { s with
-            trail         := newEntry :: s.trail
-            decisionLevel := newLevel }
+          { trail         := newEntry :: s.trail
+            decisionLevel := newLevel
+            learnt        := s.learnt
+            pending       := s.pending
+            conflict      := s.conflict
+            resSteps      := s.resSteps }
 
 --------------------------------------------------
--- 11.6 抽象 DPLL 模型：用上述四个操作组合成一步 step
+-- 11.7 抽象 DPLL 模型：用上述四个操作组合成一步 step
 --------------------------------------------------
 
 /-- 初始状态：trail 为空；决策层级 0；learnt 为空；pending = 原公式的 RCNF ；无冲突；resSteps = 0。 -/
@@ -977,26 +1039,22 @@ def Model (n : Nat) : AlgorithmModel n :=
       s.pending = [] ∨ s.conflict ≠ none }
 
 --------------------------------------------------
--- 11.7 λ_Resolution 结构密度：每个状态的 cost = 1 + 本步 Resolution 步数
+-- 11.8 结构密度 λ'：每一步至少付出 1 单位 Action，
+--      冲突分析中的 Resolution 步数作为额外成本。
 --------------------------------------------------
 
-/-- λ_Resolution 密度：
-    * 基础 cost = 1（每走一步都至少付出 1 单位 Action）；
-    * 再加上本次 step 的 Resolution 步数 resSteps，
-      由 ConflictAnalyze 填充。 -/
+/-- 密度：
+    * 基础成本 = 1；
+    * 叠加 resSteps（累积的 Resolution 步数），
+      未来可以改为“本步增量”，这里先用总量骨架。 -/
 def density (n : Nat) (s : State n) : Nat :=
-  1 + s.resSteps
+  s.resSteps.succ
 
---------------------------------------------------
--- 11.8 DPLL 专用的 pathActionNat ≥ 步数 引理
---------------------------------------------------
-
-/-- 对 DPLL 模型的 λ_Resolution，任意状态的 cost 至少为 1。 -/
+/-- 对 DPLL 模型的 density，任意状态的 cost 至少为 1。 -/
 lemma density_pos (n : Nat)
     (Φ : CNF n) (ψ : ComputationPath (Model n) Φ)
     (t : Fin (ψ.T + 1)) :
     1 ≤ density n (ψ.states t) := by
-  -- density n (ψ.states t) = 1 + resSteps ≥ 1
   simp [density]
 
 /-- 专门版下界：在 DPLL 模型中，路径的 Action 至少等于时间步数 ψ.T + 1。 -/
@@ -1021,7 +1079,7 @@ lemma dpll_pathActionNat_ge_steps (n : Nat)
   exact h
 
 --------------------------------------------------
--- 11.9 Resolution → DPLLPath 的“模拟骨架”（参数化版）
+-- 11.9 Resolution → DPLLPath 的“模拟骨架”（仍为公理）
 --------------------------------------------------
 
 /-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
@@ -1035,7 +1093,9 @@ structure Simulation {n : Nat} (Φ : CNF n)
 
 /-- 存在模拟：Resolution 反驳 ⇒ 存在一条 DPLL 轨迹 ψ，
     使得 Action(ψ) ≥ proofLength(π)。
-    当前仍然是公理（axiom）。 -/
+
+    ⭐ 当前仍然是公理（axiom），
+       你的终极目标是把它变成真正的 theorem。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
   (π : Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ) (π := π)
@@ -1136,10 +1196,8 @@ theorem no_polyTime_DPLL_on_HardFamily
     (hUpper : PolyUpper_general (hardActionFromFamily H)) :
     False :=
   by
-    -- 用提升引理，把 Resolution 的指数下界搬到 DPLL 侧
     have hLowerDPLL : ExpLower_2pow (hardActionFromFamily H) :=
       expLower_lift_from_res_to_dpll H hRes
-    -- 套用 toy_hardFamily_contradiction schema
     exact
       no_polyTime_on_family
         (A      := hardActionFromFamily H)
@@ -1149,6 +1207,7 @@ theorem no_polyTime_DPLL_on_HardFamily
 end StructuralAction
 
 end StructuralAction
+
 
 
 
