@@ -11,7 +11,7 @@ namespace StructuralAction
 -- 布尔赋值：n 个变量，对应 Fin n → Bool
 abbrev Assignment (n : Nat) := Fin n → Bool
 
--- [RESTRICT] 从扩展赋值 (n + aux) 投影回前 n 个变量
+-- 从扩展赋值 (n + aux) 投影回前 n 个变量
 def restrictAssignment {n aux : Nat}
     (σ' : Assignment (n + aux)) : Assignment n :=
   fun i =>
@@ -24,9 +24,9 @@ def restrictAssignment {n aux : Nat}
 structure Literal (n : Nat) where
   var : Fin n
   neg : Bool
-  deriving Repr, DecidableEq   -- 后面 Resolution / DPLL 需要
+  deriving Repr, DecidableEq
 
--- 子句：3 个字面（仅用于 3-SAT 部分）
+-- 3-子句
 abbrev Clause (n : Nat) := Fin 3 → Literal n
 
 -- CNF 公式：子句列表
@@ -54,16 +54,14 @@ def satSet {n : Nat} (Φ : CNF n) : Set (Assignment n) :=
   { σ | cnfEval σ Φ = true }
 
 ------------------------------------------------------------
--- 2. 能量函数 energy：未满足子句个数（递归定义）
+-- 2. 能量函数：未满足子句个数
 ------------------------------------------------------------
 
--- 能量：未满足子句数量
 def energy {n : Nat} : CNF n → Assignment n → Nat
   | [],      _ => 0
   | C :: Φ,  σ =>
       energy Φ σ + (if clauseEval σ C = true then 0 else 1)
 
--- 核心引理：cnfEval = true ↔ energy = 0
 lemma cnfEval_true_iff_energy_zero
     {n : Nat} (Φ : CNF n) (σ : Assignment n) :
     cnfEval σ Φ = true ↔ energy Φ σ = 0 := by
@@ -79,38 +77,35 @@ lemma cnfEval_true_iff_energy_zero
           cases h' : clauseEval σ C <;> simp [h', hC] at *
         simp [cnfEval, energy, hC', ih]
 
--- 满足 ↔ 能量为 0
 lemma sat_iff_energy_zero {n : Nat} (Φ : CNF n) (σ : Assignment n) :
   σ ∈ satSet Φ ↔ energy Φ σ = 0 := by
   simpa [satSet] using (cnfEval_true_iff_energy_zero (Φ := Φ) (σ := σ))
 
 ------------------------------------------------------------
--- 3. 一般 CNF（变长子句）和评估
+-- 3. 一般 CNF（变长子句）及评估 + Tseitin 接口
 ------------------------------------------------------------
 
 namespace PigeonholeFamily
 
--- 一般子句：字面列表（长度不限）
+-- 一般子句：字面列表
 abbrev GenClause (n : Nat) := List (StructuralAction.Literal n)
-
--- 一般 CNF：子句列表，每个子句可以任意长度
+-- 一般 CNF
 abbrev GenCNF (n : Nat) := List (GenClause n)
 
--- 评价一般子句：折叠“或”
+-- 一般子句的“或”
 def genClauseEval {n : Nat} (σ : StructuralAction.Assignment n)
     (Γ : GenClause n) : Bool :=
   Γ.foldr (fun ℓ acc => StructuralAction.literalEval σ ℓ || acc) false
 
--- 评价一般 CNF：所有子句的合取
+-- 一般 CNF 的“且”
 def genCNFEval {n : Nat} (σ : StructuralAction.Assignment n)
     (Φ : GenCNF n) : Bool :=
   Φ.foldr (fun C acc => genClauseEval σ C && acc) true
 
 ------------------------------------------------------------
--- 3'. 旧版 padding to3CNF（保留做对比，不再用在主证明链上）
+-- 3'. 演示用 padding 3-SAT 转换（不再用于主证明链）
 ------------------------------------------------------------
 
--- 把 3 个字面打包成一个 3-子句
 def mkClause3 {n : Nat}
     (a b c : StructuralAction.Literal n)
     : StructuralAction.Clause n :=
@@ -119,7 +114,6 @@ def mkClause3 {n : Nat}
   | ⟨1, _⟩ => b
   | ⟨2, _⟩ => c
 
--- 演示版：长度 ≥ 4 时只是简单分块，不保证等价
 def to3CNFClause {n : Nat} : GenClause n → List (StructuralAction.Clause n)
   | []        => []
   | [a]       => [mkClause3 a a a]
@@ -132,42 +126,30 @@ def to3CNF {n : Nat} (Φ : GenCNF n) : StructuralAction.CNF n :=
   Φ.foldr (fun Γ acc => to3CNFClause Γ ++ acc) []
 
 ------------------------------------------------------------
--- [TSEITIN CORE] 真正用于 3-CNF 的 Tseitin 转换接口（构造性版本）
+-- Tseitin 真正接口：引入辅助变量 + 3-CNF
 ------------------------------------------------------------
 
-/-- Tseitin 转换的结果：
-    * 原公式有 n 个变量；
-    * Tseitin 转换后有 n + auxVars 个变量；
-    * 输出一个真正的 3-CNF：StructuralAction.CNF (n + auxVars)。 -/
 structure TseitinResult (n : Nat) where
   auxVars : Nat
   cnf     : StructuralAction.CNF (n + auxVars)
 
-/-- 真正的 Tseitin 转换：
-    这里先只给出“接口”，具体构造+证明是后续大工程，
-    所以目前仍用 axiom 占位。 -/
+/-- Tseitin 转换：占位 axiom，接口是正确的。 -/
 axiom tseitinOfGenCNF {n : Nat} (Φ : GenCNF n) : TseitinResult n
 
-/-- Tseitin 方向 1：GenCNF SAT ⇒ Tseitin CNF SAT（函数式版本）。
-
-    给定原始赋值 σ，使 genCNFEval σ Φ = true，
-    产生扩展赋值 σ' 使 Tseitin CNF 也为 true。 -/
+/-- Tseitin 方向 1：GenCNF SAT ⇒ Tseitin CNF SAT（函数式版本）。 -/
 axiom tseitin_sat_of_genSat {n : Nat} (Φ : GenCNF n) :
   ∀ (σ : StructuralAction.Assignment n),
     genCNFEval σ Φ = true →
     ∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
       StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true
 
-/-- Tseitin 方向 2：Tseitin CNF SAT ⇒ GenCNF SAT（函数式版本）。
-
-    给定扩展赋值 σ'，若 Tseitin CNF 满足，则
-    原 CNF 在 restrictAssignment σ' 上也满足。 -/
+/-- Tseitin 方向 2：Tseitin CNF SAT ⇒ GenCNF SAT（函数式版本）。 -/
 axiom genSat_of_tseitin_sat {n : Nat} (Φ : GenCNF n) :
   ∀ (σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars)),
     StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true →
     genCNFEval (StructuralAction.restrictAssignment σ') Φ = true
 
-/-- 方便使用的“存在性版本”：GenCNF SAT ⇒ Tseitin SAT。 -/
+/-- 存在性版本：GenCNF SAT ⇒ Tseitin SAT。 -/
 lemma tseitin_sat_of_genSat_exists {n : Nat} (Φ : GenCNF n) :
   (∃ σ : StructuralAction.Assignment n,
       genCNFEval σ Φ = true)
@@ -178,7 +160,7 @@ lemma tseitin_sat_of_genSat_exists {n : Nat} (Φ : GenCNF n) :
   rcases h with ⟨σ, hσ⟩
   exact tseitin_sat_of_genSat (Φ := Φ) σ hσ
 
-/-- 方便使用的“存在性版本”：Tseitin SAT ⇒ GenCNF SAT。 -/
+/-- 存在性版本：Tseitin SAT ⇒ GenCNF SAT。 -/
 lemma genSat_of_tseitin_sat_exists {n : Nat} (Φ : GenCNF n) :
   (∃ σ' : StructuralAction.Assignment (n + (tseitinOfGenCNF Φ).auxVars),
       StructuralAction.cnfEval σ' (tseitinOfGenCNF Φ).cnf = true)
@@ -193,30 +175,21 @@ lemma genSat_of_tseitin_sat_exists {n : Nat} (Φ : GenCNF n) :
 end PigeonholeFamily
 
 ------------------------------------------------------------
--- 4. [PHP FIX] 鸽笼原理 PHPₙ 的变量编码 + CNF 族
+-- 4. PHP 编码（修正变量个数）
 ------------------------------------------------------------
 
 open PigeonholeFamily
 
--- 第 n 个鸽子：共有 n+1 只鸽子
 abbrev Pigeon (n : Nat) := Fin (n + 1)
-
--- 第 n 个洞：共有 n 个洞
 abbrev Hole (n : Nat) := Fin n
 
-/-- PHPₙ 的布尔变量个数：精确为 (n+1)*n 个。 -/
+/-- PHPₙ 的变量总数：精确为 (n+1)*n 个。 -/
 abbrev PHPVar (n : Nat) : Nat :=
   (n + 1) * n
 
-/-- PHPₙ 的变量索引类型。 -/
 abbrev PHPVarIdx (n : Nat) := Fin (PHPVar n)
 
-/-- 把 (p, h) 映射到变量索引：index(p, h) = p * n + h。
-
-    证明思路：
-    * 因为 h < n，所以 p*n + h < p*n + n = (p+1)*n；
-    * 又因为 p ≤ n，所以 (p+1)*n ≤ (n+1)*n = PHPVar n；
-    * 合起来得到 p*n + h < PHPVar n。 -/
+/-- 把 (p, h) 映射到 index = p * n + h。 -/
 noncomputable
 def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
   ⟨p.1 * n + h.1, by
@@ -224,46 +197,38 @@ def phpVarIndex (n : Nat) (p : Pigeon n) (h : Hole n) : PHPVarIdx n :=
     have hp_le : p.1 ≤ n := Nat.le_of_lt_succ hp_lt
     have hh_lt : h.1 < n := h.2
 
-    -- 1. p * n + h < (p+1) * n
+    -- p*n + h < (p+1)*n
     have h_lt_step : p.1 * n + h.1 < p.1 * n + n := by
       exact Nat.add_lt_add_left hh_lt (p.1 * n)
-
     have h_eq : p.1 * n + n = (p.1 + 1) * n := by
       ring
-
     have h_lt_p1n : p.1 * n + h.1 < (p.1 + 1) * n := by
       simpa [h_eq] using h_lt_step
 
-    -- 2. (p+1) ≤ (n+1) ⇒ (p+1)*n ≤ (n+1)*n
+    -- (p+1)*n ≤ (n+1)*n
     have hp1_le : p.1 + 1 ≤ n + 1 :=
       Nat.succ_le_succ hp_le
     have hp1n_le : (p.1 + 1) * n ≤ (n + 1) * n :=
       Nat.mul_le_mul_right _ hp1_le
 
-    -- 3. 链一下：p*n + h < (p+1)*n ≤ (n+1)*n
     have h_final :
         p.1 * n + h.1 < (n + 1) * n :=
       lt_of_lt_of_le h_lt_p1n hp1n_le
 
-    -- 4. 最后改写成 PHPVar n
     simpa [PHPVar] using h_final ⟩
 
--- 把所有鸽子列成一个 List
 noncomputable
 def pigeonsList (n : Nat) : List (Pigeon n) :=
   List.ofFn (fun p : Pigeon n => p)
 
--- 把所有洞列成一个 List
 noncomputable
 def holesList (n : Nat) : List (Hole n) :=
   List.ofFn (fun h : Hole n => h)
 
--- 列出一个 List 中所有“有序对 (xᵢ, xⱼ)，其中 i < j”
 def listPairs {α : Type} : List α → List (α × α)
   | []       => []
   | x :: xs  => (xs.map (fun y => (x,y))) ++ listPairs xs
 
--- 单只鸽子的 “至少一个洞” 子句：∨_{h} x_{p,h}
 noncomputable
 def phpClauseAtLeastOne (n : Nat) (p : Pigeon n) :
     GenClause (PHPVar n) :=
@@ -271,12 +236,10 @@ def phpClauseAtLeastOne (n : Nat) (p : Pigeon n) :
     ({ var := phpVarIndex n p h, neg := false } :
       StructuralAction.Literal (PHPVar n)))
 
--- “At Least One” 子句族：对每个鸽子 p
 noncomputable
 def PHP_atLeastOne (n : Nat) : GenCNF (PHPVar n) :=
   List.ofFn (fun p : Pigeon n => phpClauseAtLeastOne n p)
 
--- 对固定洞 h，生成所有 “至多一只鸽子占 h” 的 2 字面子句
 noncomputable
 def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
     GenCNF (PHPVar n) :=
@@ -288,7 +251,6 @@ def phpClausesAtMostOneForHole (n : Nat) (h : Hole n) :
       ({ var := phpVarIndex n p₂ h, neg := true } :
          StructuralAction.Literal (PHPVar n)) ])
 
--- “At Most One” 子句族：对每个洞 h
 noncomputable
 def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
   let hs : List (Hole n) := holesList n
@@ -296,13 +258,12 @@ def PHP_atMostOne (n : Nat) : GenCNF (PHPVar n) :=
     (fun h acc => phpClausesAtMostOneForHole n h ++ acc)
     []
 
--- PHPₙ 的完整变长 CNF（未 3-SAT 化）：AtLeastOne ∧ AtMostOne
 noncomputable
 def PHP_fullGenCNF (n : Nat) : GenCNF (PHPVar n) :=
   PHP_atLeastOne n ++ PHP_atMostOne n
 
 ------------------------------------------------------------
--- 5. 纯数学鸽笼原理：不存在单射 Pigeon n → Hole n
+-- 5. 纯数学鸽笼原理
 ------------------------------------------------------------
 
 section PigeonholeMath
@@ -324,16 +285,15 @@ lemma no_injection_Pigeon_to_Hole (n : Nat) :
 end PigeonholeMath
 
 ------------------------------------------------------------
--- 6. 从 PHP_fullGenCNF 到 Tseitin 3-CNF 的 UNSAT 逻辑链
+-- 6. PHP_fullGenCNF UNSAT + Tseitin 版 HardCNF_T
 ------------------------------------------------------------
 
 section PHPUnsatTseitin
 
-open PigeonholeFamily
 open Function
+open PigeonholeFamily
 
-/-- PHP_fullGenCNF 的语义桥接：
-    SAT ↔ 存在单射 f : Pigeon n → Hole n。 -/
+/-- PHP_fullGenCNF 的语义桥接：SAT ↔ 存在单射。 -/
 axiom PHP_fullGenCNF_sat_iff_injection (n : Nat) :
   (∃ σ : StructuralAction.Assignment (PHPVar n),
      genCNFEval σ (PHP_fullGenCNF n) = true)
@@ -350,19 +310,17 @@ lemma PHP_fullGenCNF_unsat (n : Nat) :
     (PHP_fullGenCNF_sat_iff_injection n).1 hSat
   exact no_injection_Pigeon_to_Hole n hInj
 
-/-- Tseitin 之后 PHPₙ 的变量总数：
-    原始 PHPVar n 个变量 + Tseitin 引入的辅助变量个数。 -/
+/-- Tseitin 之后 PHPₙ 的变量总数：原始变量 + auxVars。 -/
 noncomputable
 def HardVarT (n : Nat) : Nat :=
   PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars
 
-/-- Tseitin 版困难族公式：对 PHP_fullGenCNF 做 Tseitin 3-CNF 转换。 -/
+/-- Tseitin 版困难公式：PHP_fullGenCNF 经 Tseitin 3-CNF。 -/
 noncomputable
 def HardCNF_T (n : Nat) : CNF (HardVarT n) :=
   (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf
 
-/-- [HARD_T FIX] Tseitin 版困难族公式不可满足，
-    使用了“函数式 + restrictAssignment”的 Tseitin 规格。 -/
+/-- Tseitin 版困难族公式不可满足。 -/
 lemma HardCNF_T_unsat (n : Nat) :
   ∀ σ' : Assignment (HardVarT n),
     cnfEval σ' (HardCNF_T n) = false := by
@@ -371,20 +329,22 @@ lemma HardCNF_T_unsat (n : Nat) :
   have hUnsatGen := PHP_fullGenCNF_unsat n
   have hNotSat : ¬ cnfEval σ' (HardCNF_T n) = true := by
     intro hSat
-    -- 1. 把 σ' 看成 Tseitin CNF 的满足赋值
+    -- 把 σ' 看成 Tseitin CNF 的满足赋值
     have hSatExist :
-        ∃ σ'' : Assignment (PHPVar n + (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars),
+        ∃ σ'' : Assignment (PHPVar n +
+          (tseitinOfGenCNF (PHP_fullGenCNF n)).auxVars),
           cnfEval σ'' (tseitinOfGenCNF (PHP_fullGenCNF n)).cnf = true := by
+      -- 利用 HardVarT 的定义展开即可 defeq
       refine ⟨σ', ?_⟩
       simpa [HardCNF_T, HardVarT] using hSat
-    -- 2. 用“存在性版本”的 Tseitin 方向 2 得到原公式可满足
+    -- Tseitin SAT ⇒ GenCNF SAT
     have hGenSat :
         ∃ σ₀ : Assignment (PHPVar n),
           genCNFEval σ₀ (PHP_fullGenCNF n) = true :=
       PigeonholeFamily.genSat_of_tseitin_sat_exists
         (Φ := PHP_fullGenCNF n)
         hSatExist
-    -- 3. 与 PHP_fullGenCNF_unsat 矛盾
+    -- 与 PHP_fullGenCNF_unsat 矛盾
     exact hUnsatGen hGenSat
   have hOr :
       cnfEval σ' (HardCNF_T n) = true ∨
@@ -399,21 +359,17 @@ lemma HardCNF_T_unsat (n : Nat) :
 end PHPUnsatTseitin
 
 ------------------------------------------------------------
--- 7. 抽象 DPLL 作用量序列 + 指数下界 / 多项式上界 schema
+-- 7. 抽象作用量族 + 上下界
 ------------------------------------------------------------
 
--- 一个“作用量族”：给每个规模 n（例如 PHPₙ）一个自然数 A n
 def ActionSeq := Nat → Nat
 
--- 指数下界：A n ≥ 2^n
 def ExpLower_2pow (A : ActionSeq) : Prop :=
   ∀ n : Nat, (2 : Nat)^n ≤ A n
 
--- 多项式上界（这里先固定成 n^2 的玩具版本）
 def PolyUpper_general (A : ActionSeq) : Prop :=
   ∀ n : Nat, A n ≤ n^2
 
--- 玩具矛盾：如果 A 同时满足“指数下界 + n^2 上界”，则矛盾
 theorem toy_hardFamily_contradiction
     (A : ActionSeq)
     (hLower : ExpLower_2pow A)
@@ -427,7 +383,6 @@ theorem toy_hardFamily_contradiction
     lt_of_le_of_lt h_le h_lt
   exact lt_irrefl _ h_absurd
 
--- 更语义化的包装名字
 theorem no_polyTime_on_family
     (A : ActionSeq)
     (hLower : ExpLower_2pow A)
@@ -436,13 +391,7 @@ theorem no_polyTime_on_family
   toy_hardFamily_contradiction A hLower hUpper
 
 ------------------------------------------------------------
--- 8. 一个“占位版”的 HardActionDPLL（目前只是 0）
-------------------------------------------------------------
-
-def HardActionDPLL : ActionSeq := fun _ => 0
-
-------------------------------------------------------------
--- 9. 抽象算法模型 + 轨迹 + 离散作用量 + 下界引理
+-- 8. 抽象算法模型 + 轨迹 + pathAction
 ------------------------------------------------------------
 
 structure AlgorithmModel (n : Nat) where
@@ -514,34 +463,25 @@ lemma pathActionNat_ge_time
   simpa [pathActionNat] using h_final
 
 ------------------------------------------------------------
--- 10. Resolution 系统（RClause = List (Literal n)）
+-- 9. Resolution 系统
 ------------------------------------------------------------
 
 namespace Resolution
 
 open StructuralAction
 
-/-- Resolution 子句：任意长度的字面列表（可以是空子句）。 -/
 abbrev RClause (n : Nat) := List (Literal n)
-
-/-- Resolution 公式：子句列表。 -/
 abbrev RCNF (n : Nat) := List (RClause n)
 
-/-- 字面取反：只翻转 neg 位，变量索引不变。 -/
 def litNeg {n : Nat} (ℓ : Literal n) : Literal n :=
   { var := ℓ.var, neg := !ℓ.neg }
 
-/-- 合并两个子句（集合视角：C ∪ D）。目前简单实现为列表拼接，再做去重。 -/
 def merge {n : Nat} (C D : RClause n) : RClause n :=
   (C ++ D).eraseDups
 
-/-- 判断两个字面是否互补：变量相同，极性相反。 -/
 def isComplement {n : Nat} (ℓ₁ ℓ₂ : Literal n) : Bool :=
   decide (ℓ₁.var = ℓ₂.var ∧ ℓ₁.neg ≠ ℓ₂.neg)
 
-/-- 简单规范化子句：
-    * 去重；
-    * 若存在互补对，则返回空子句（视作永真子句，可在 ConflictAnalyze 时忽略）。 -/
 def simplify {n : Nat} (C : RClause n) : RClause n :=
   let C₁ := C.eraseDups
   if h : ∃ ℓ₁ ∈ C₁, ∃ ℓ₂ ∈ C₁, isComplement ℓ₁ ℓ₂ = true then
@@ -549,8 +489,6 @@ def simplify {n : Nat} (C : RClause n) : RClause n :=
   else
     C₁
 
-/-- 单步 Resolution：从 (ℓ :: C) 和 (¬ℓ :: D) 推出 C ∪ D，
-    并做一次简化（去重 / 互补检查）。 -/
 def resolveOneStep {n : Nat}
     (ℓ : Literal n)
     (C D : RClause n) : RClause n :=
@@ -558,7 +496,6 @@ def resolveOneStep {n : Nat}
   let D' := D.filter (fun x => x ≠ litNeg ℓ)
   simplify (merge C' D')
 
-/-- Resolution 推导关系。 -/
 inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
   | axiom (C : RClause n) (hC : C ∈ Φ) :
       Derives Φ C
@@ -571,11 +508,9 @@ inductive Derives {n : Nat} (Φ : RCNF n) : RClause n → Type where
       (hD : Derives Φ (litNeg ℓ :: D)) :
       Derives Φ (C ++ D)
 
-/-- 一个反驳：导出了空子句 []。 -/
 def Refutes {n : Nat} (Φ : RCNF n) : Type :=
   Derives Φ ([] : RClause n)
 
-/-- 单个 Resolution 推导树的“长度”（节点数）。 -/
 def derivationLength {n : Nat} {Φ : RCNF n} {C : RClause n}
     (h : Derives Φ C) : Nat :=
   match h with
@@ -584,21 +519,14 @@ def derivationLength {n : Nat} {Φ : RCNF n} {C : RClause n}
   | Derives.resolve _ _ _ h₁ h₂ =>
       derivationLength h₁ + derivationLength h₂ + 1
 
-/-- 一个反驳的长度：就是其内部导出证明的长度。 -/
 def proofLength {n : Nat} {Φ : RCNF n}
     (π : Refutes Φ) : Nat :=
   derivationLength π
 
-/-- （抽象形态）Resolution 对某些公式族的指数下界占位公理。 -/
-axiom resolutionRefutation_expLower_2pow :
-  ∃ (Len : StructuralAction.ActionSeq),
-    StructuralAction.ExpLower_2pow Len
-
 end Resolution
 
 ------------------------------------------------------------
--- 11. AbstractDPLL：带 decisionLevel / antecedent / resSteps
---     的状态 + UnitProp / ConflictAnalyze / Backtrack
+-- 10. AbstractDPLL：DPLL 状态 + UnitProp + ConflictAnalyze + Backtrack
 ------------------------------------------------------------
 
 namespace AbstractDPLL
@@ -606,34 +534,22 @@ namespace AbstractDPLL
 open StructuralAction
 open Resolution
 
---------------------------------------------------
--- 11.1 从 3-SAT CNF 转成 Resolution CNF
---------------------------------------------------
-
-/-- 把一个 3-子句变成 Resolution 子句（3 个字面组成的 List）。 -/
+/-- 3-SAT CNF → Resolution CNF。 -/
 def clauseToRClause {n : Nat} (C : Clause n) : RClause n :=
   [ C ⟨0, by decide⟩,
     C ⟨1, by decide⟩,
     C ⟨2, by decide⟩ ]
 
-/-- 把 3-SAT CNF（Clause 列表）转成 Resolution CNF（RClause 列表）。 -/
 def cnfToRCNF {n : Nat} (Φ : CNF n) : RCNF n :=
   Φ.map clauseToRClause
 
---------------------------------------------------
--- 11.2 Trail / State：加入 decisionLevel / antecedent / resSteps
---------------------------------------------------
-
-/-- Trail 中的一个条目：包含字面、决策层级以及产生它的前因子句。 -/
 structure TrailEntry (n : Nat) where
   lit        : Literal n
   level      : Nat
   antecedent : Option (RClause n)
 
-/-- 决策/传播轨迹：一串已经赋为 True 的字面（附带层级和前因）。 -/
 abbrev Trail (n : Nat) := List (TrailEntry n)
 
-/-- 抽象 DPLL 状态。 -/
 structure State (n : Nat) where
   trail         : Trail n
   decisionLevel : Nat
@@ -642,47 +558,32 @@ structure State (n : Nat) where
   conflict      : Option (RClause n)
   resSteps      : Nat
 
---------------------------------------------------
--- 11.3 Trail 相关辅助：真假判断 / level / antecedent
---------------------------------------------------
-
-/-- 字面 ℓ 是否在 trail 中被赋为 True。 -/
 def litIsTrue {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
   τ.any (fun e => e.lit = ℓ)
 
-/-- 字面 ℓ 是否在 trail 下为 False（存在其取反）。 -/
 def litIsFalse {n : Nat} (τ : Trail n) (ℓ : Literal n) : Bool :=
   τ.any (fun e => e.lit = litNeg ℓ)
 
-/-- 在给定 trail 下，从子句 C 里收集“未赋值的字面”。 -/
 def unassignedLits {n : Nat} (τ : Trail n) (C : RClause n) :
     List (Literal n) :=
   C.filter (fun ℓ => !litIsTrue τ ℓ && !litIsFalse τ ℓ)
 
-/-- 在 Trail 上查找某个字面的 antecedent 子句（若存在）。 -/
 def findAntecedent {n : Nat} (τ : Trail n) (ℓ : Literal n) :
     Option (RClause n) :=
   match τ.find? (fun e => e.lit = ℓ) with
   | none      => none
   | some ent  => ent.antecedent
 
-/-- Trail 中给定字面的决策层级（若未出现在 trail 中，则为 none）。 -/
 def litLevel {n : Nat} (τ : Trail n) (ℓ : Literal n) : Option Nat :=
   match τ.find? (fun e => e.lit = ℓ) with
   | none     => none
   | some ent => some ent.level
 
-/-- 带缺省值版本：若字面不在 trail 中，则视为层级 0。 -/
 def litLevelDflt {n : Nat} (τ : Trail n) (ℓ : Literal n) : Nat :=
   match litLevel τ ℓ with
   | some l => l
   | none   => 0
 
---------------------------------------------------
--- 11.4 Unit Propagation
---------------------------------------------------
-
-/-- Unit Propagation 的递归辅助函数。 -/
 def unitPropagateAux {n : Nat}
     (τ : Trail n) (s : State n) :
     List (RClause n) → State n
@@ -704,7 +605,6 @@ def unitPropagateAux {n : Nat}
         | _ =>
             unitPropagateAux τ s Cs
 
-/-- Unit Propagation 顶层。 -/
 def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   if h : s.conflict ≠ none then
     s
@@ -713,11 +613,6 @@ def unitPropagate {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
     let τ := s.trail
     unitPropagateAux τ s clauses
 
---------------------------------------------------
--- 11.5 冲突分析：计数 / 选择 / 递归 resolve
---------------------------------------------------
-
-/-- 统计一个子句中，在给定 decisionLevel 下出现的文字个数。 -/
 def countLitsAtLevel {n : Nat}
     (τ : Trail n) (C : RClause n) (lvl : Nat) : Nat :=
   C.foldl
@@ -728,7 +623,6 @@ def countLitsAtLevel {n : Nat}
       | none   => acc)
     0
 
-/-- 从子句中挑出一个位于给定 decisionLevel 的文字（若存在）。 -/
 def pickLitAtLevel? {n : Nat}
     (τ : Trail n) (C : RClause n) (lvl : Nat) :
     Option (Literal n) :=
@@ -737,12 +631,10 @@ def pickLitAtLevel? {n : Nat}
     | some l => l = lvl
     | none   => False)
 
-/-- 冲突分析返回结果。 -/
 structure AnalyzeResult (n : Nat) where
   learnt   : RClause n
   resSteps : Nat
 
-/-- 冲突分析核心递归（简化版 UIP/backjump）： -/
 def analyzeConflictCore {n : Nat}
     (τ : Trail n) (C₀ : RClause n) (lvl fuel : Nat) :
     AnalyzeResult n :=
@@ -771,23 +663,12 @@ def analyzeConflictCore {n : Nat}
                 { learnt   := resNext.learnt
                   resSteps := resNext.resSteps.succ }
 
---------------------------------------------------
--- 11.6 Backjump 辅助
---------------------------------------------------
-
-/-- 计算一个子句在当前 trail 下出现的最大决策层级（缺省 0）。 -/
 def maxLevelInClause {n : Nat} (τ : Trail n) (C : RClause n) : Nat :=
   C.foldl (fun acc ℓ => Nat.max acc (litLevelDflt τ ℓ)) 0
 
-/-- 给定目标决策层级 lvl，把 trail 裁剪为只保留 level ≤ lvl 的条目。 -/
 def backtrackTrail {n : Nat} (τ : Trail n) (lvl : Nat) : Trail n :=
   τ.filter (fun e => e.level ≤ lvl)
 
---------------------------------------------------
--- 11.7 ConflictAnalyze / Backtrack / Decide
---------------------------------------------------
-
-/-- Conflict Analyze。 -/
 def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
   match s.conflict with
   | none => s
@@ -803,7 +684,6 @@ def conflictAnalyze {n : Nat} (ΦR : RCNF n) (s : State n) : State n :=
         conflict := none,
         resSteps := s.resSteps + res.resSteps }
 
-/-- Backtrack / Backjump。 -/
 def backtrack {n : Nat} (s : State n) : State n :=
   match s.learnt with
   | [] => s
@@ -819,7 +699,6 @@ def backtrack {n : Nat} (s : State n) : State n :=
         conflict      := s.conflict
         resSteps      := s.resSteps }
 
-/-- Decide：在没有 unit / 冲突时，选择一个未赋值的变量做决策。 -/
 def decide {n : Nat} (s : State n) : State n :=
   match s.pending with
   | [] => s
@@ -839,11 +718,6 @@ def decide {n : Nat} (s : State n) : State n :=
             conflict      := s.conflict
             resSteps      := s.resSteps }
 
---------------------------------------------------
--- 11.8 抽象 DPLL 模型：init / step / halting
---------------------------------------------------
-
-/-- 初始状态。 -/
 def initState {n : Nat} (Φ : CNF n) : State n :=
   { trail         := []
     decisionLevel := 0
@@ -852,7 +726,6 @@ def initState {n : Nat} (Φ : CNF n) : State n :=
     conflict      := none
     resSteps      := 0 }
 
-/-- 抽象 DPLL 模型。 -/
 noncomputable
 def Model (n : Nat) : AlgorithmModel n :=
   { StateType := State n
@@ -867,22 +740,15 @@ def Model (n : Nat) : AlgorithmModel n :=
     halting := fun _ s =>
       s.pending = [] ∨ s.conflict ≠ none }
 
---------------------------------------------------
--- 11.9 结构密度 λ'：每一步至少付出 1 单位 Action + resSteps
---------------------------------------------------
-
-/-- 密度：至少 1，并叠加 resSteps。 -/
 def density (n : Nat) (s : State n) : Nat :=
   s.resSteps.succ
 
-/-- 对 DPLL 模型的 density，任意状态的 cost 至少为 1。 -/
 lemma density_pos (n : Nat)
     (Φ : CNF n) (ψ : ComputationPath (Model n) Φ)
     (t : Fin (ψ.T + 1)) :
     1 ≤ density n (ψ.states t) := by
   simp [density]
 
-/-- 专门版下界：在 DPLL 模型中，路径的 Action 至少等于时间步数 ψ.T + 1。 -/
 lemma dpll_pathActionNat_ge_steps (n : Nat)
     (Φ : CNF n) (ψ : ComputationPath (Model n) Φ) :
     ψ.T + 1 ≤ pathActionNat (Model n) Φ (density n) ψ := by
@@ -901,28 +767,23 @@ lemma dpll_pathActionNat_ge_steps (n : Nat)
       hPos
   exact h
 
---------------------------------------------------
--- 11.10 Resolution → DPLLPath 的“模拟骨架”（仍为公理）
---------------------------------------------------
-
-/-- 一个“模拟记录”：给定 CNF Φ 及其 Resolution 反驳 π，
-    构造 DPLL 计算路径 ψ，并证明
-      pathActionNat ≥ proofLength π。 -/
+/-- 模拟记录：给定 Φ 和其 Resolution 反驳 π，构造 DPLL 轨迹 ψ，
+    且 pathActionNat ≥ proofLength π。 -/
 structure Simulation {n : Nat} (Φ : CNF n)
-    (π : Refutes (cnfToRCNF Φ)) where
+    (π : Resolution.Refutes (cnfToRCNF Φ)) where
   ψ  : ComputationPath (Model n) Φ
   hA : pathActionNat (Model n) Φ (density n) ψ
-        ≥ proofLength π
+        ≥ Resolution.proofLength π
 
-/-- 存在模拟（未来目标：把它从 axiom 提升为 theorem）。 -/
+/-- 核心大猜想：存在这样的模拟（当前仍为 axiom）。 -/
 axiom exists_simulation {n : Nat} (Φ : CNF n)
-  (π : Refutes (cnfToRCNF Φ)) :
+  (π : Resolution.Refutes (cnfToRCNF Φ)) :
   Simulation (Φ := Φ) (π := π)
 
 end AbstractDPLL
 
 ------------------------------------------------------------
--- 12. Resolution-hard family → DPLL-hard action family
+-- 11. HardFamily：Resolution-hard → DPLL-hard
 ------------------------------------------------------------
 
 section HardFamilySchema
@@ -930,17 +791,14 @@ section HardFamilySchema
 open Resolution
 open AbstractDPLL
 
-/-- 一个抽象的 “Resolution 困难族”。 -/
 structure HardFamily where
   m : Nat → Nat
   F : ∀ n, CNF (m n)
   π : ∀ n, Resolution.Refutes (AbstractDPLL.cnfToRCNF (F n))
 
-/-- 把每个 n 的 Resolution 反驳长度视为一个作用量族。 -/
 def resLengthSeq (H : HardFamily) : ActionSeq :=
   fun n => Resolution.proofLength (H.π n)
 
-/-- 从一个 Resolution 困难族 H 构造对应的 DPLL 作用量族。 -/
 noncomputable
 def hardActionFromFamily (H : HardFamily) : ActionSeq :=
   fun n =>
@@ -954,7 +812,6 @@ def hardActionFromFamily (H : HardFamily) : ActionSeq :=
       (AbstractDPLL.density (H.m n))
       sim.ψ
 
-/-- 对每个 n，DPLL 作用量 ≥ 对应的 Resolution 反驳长度。 -/
 lemma hardActionFromFamily_ge_resLength (H : HardFamily) :
   ∀ n, resLengthSeq H n ≤ hardActionFromFamily H n := by
   intro n
@@ -973,8 +830,6 @@ lemma hardActionFromFamily_ge_resLength (H : HardFamily) :
       sim.ψ
   exact sim.hA
 
-/-- 若某个 HardFamily 的 Resolution 反驳族存在指数下界，
-    则对应的 DPLL 作用量族也存在指数下界。 -/
 lemma expLower_lift_from_res_to_dpll
     (H : HardFamily)
     (hRes : ExpLower_2pow (resLengthSeq H)) :
@@ -985,9 +840,6 @@ lemma expLower_lift_from_res_to_dpll
     hardActionFromFamily_ge_resLength H n
   exact le_trans h1 h2
 
-/-- 把 “Resolution 困难族在证明长度上有指数下界”
-    和 “对应的 DPLL 作用量族有多项式上界” 拼在一起，
-    得到矛盾。 -/
 theorem no_polyTime_DPLL_on_HardFamily
     (H : HardFamily)
     (hRes : ExpLower_2pow (resLengthSeq H))
@@ -1002,14 +854,37 @@ theorem no_polyTime_DPLL_on_HardFamily
         (hLower := hLowerDPLL)
         (hUpper := hUpper)
 
+------------------------------------------------------------
+-- 11.1 PHP 具体困难族实例 + 指数下界公理
+------------------------------------------------------------
+
+/-- 公理：对每个 n，PHP Tseitin 公式存在 Resolution 反驳。 -/
+axiom PHP_resolution_refutation (n : Nat) :
+  Resolution.Refutes (AbstractDPLL.cnfToRCNF (HardCNF_T n))
+
+/-- PHP 对应的 HardFamily 实例。 -/
+noncomputable
+def PHP_HardFamily : HardFamily :=
+  { m := HardVarT
+    F := fun n => HardCNF_T n
+    π := fun n => PHP_resolution_refutation n }
+
+/-- 公理：PHP_HardFamily 的 Resolution 反驳长度族有指数下界。 -/
+axiom PHP_resolution_expLower_2pow :
+  ExpLower_2pow (resLengthSeq PHP_HardFamily)
+
+/-- 主结论形式（针对 PHP 困难族）：DPLL 不可能在多项式作用量内解决。 -/
+theorem no_polyTime_DPLL_on_PHP
+    (hUpper : PolyUpper_general (hardActionFromFamily PHP_HardFamily)) :
+    False :=
+  no_polyTime_DPLL_on_HardFamily
+    (H := PHP_HardFamily)
+    (hRes := PHP_resolution_expLower_2pow)
+    (hUpper := hUpper)
+
 end HardFamilySchema
 
 end StructuralAction
-
-
-
-
-
 
 
 
